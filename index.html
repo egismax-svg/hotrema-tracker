@@ -55,6 +55,7 @@
           class="px-4 py-1.5 rounded-md text-sm font-semibold transition">🖥️ Office Desktop</button>
       </div>
       <div id="userChip" class="hidden items-center gap-2 text-sm">
+        <button onclick="openSync()" class="text-[11px] bg-blue-700 hover:bg-blue-800 text-white px-2 py-1 rounded-md font-semibold" title="Move jobs between this device and another">🔄 Sync</button>
         <span class="text-slate-500">👤 <span id="userName" class="font-semibold text-blue-900"></span></span>
         <button onclick="logout()" class="text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded-md font-semibold">Log out</button>
       </div>
@@ -461,6 +462,24 @@
   </div>
 </div>
 
+<!-- ======================= SYNC MODAL ======================= -->
+<div id="syncModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-5 fade-in">
+    <h3 class="font-bold text-lg mb-1">🔄 Sync Between Devices</h3>
+    <p class="text-sm text-slate-500 mb-4">Each phone and PC keeps its own register. To bring them together: <b>share the data file</b> from one device (WhatsApp, email…) and <b>load it</b> on the other — jobs are merged by job number, nothing gets lost.</p>
+    <div class="space-y-2">
+      <button onclick="exportData()" class="w-full py-3 rounded-xl bg-blue-700 hover:bg-blue-800 text-white font-bold text-sm">
+        📤 Share / Save Data File<span class="block text-[10px] font-normal opacity-80">send this device's jobs to another device</span>
+      </button>
+      <label for="syncFile" class="block w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-sm text-center cursor-pointer">
+        📥 Load Data File<span class="block text-[10px] font-normal opacity-80">merge jobs received from another device</span>
+      </label>
+      <input id="syncFile" type="file" accept=".json,application/json" class="hidden" onchange="importData(this)">
+    </div>
+    <button onclick="closeModal('syncModal')" class="w-full mt-4 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-sm">Close</button>
+  </div>
+</div>
+
 <!-- ======================= LOGIN OVERLAY ======================= -->
 <div id="loginOverlay" class="hidden fixed inset-0 bg-blue-950 z-[70] flex items-center justify-center p-4">
   <form onsubmit="tryLogin(event)" class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4 fade-in">
@@ -605,20 +624,79 @@ if (savedScaffolds) {
   scaffolds = IS_LOCAL ? demoData() : [];
 }
 
+// blob photo URLs cannot survive a reload or travel between devices — keep the filenames, drop the URLs
+function cleanForSave() {
+  return scaffolds.map(s => ({
+    ...s,
+    photos: {
+      ...s.photos,
+      jobUrl: null, requestUrl: null, scaftagUrl: null,
+      extra: (s.photos.extra || []).map(p => ({ name: p.name, url: null })),
+    },
+  }));
+}
+
 function persist() {
   try {
-    // blob photo URLs cannot survive a reload — keep the filenames, drop the URLs
-    const clean = scaffolds.map(s => ({
-      ...s,
-      photos: {
-        ...s.photos,
-        jobUrl: null, requestUrl: null, scaftagUrl: null,
-        extra: (s.photos.extra || []).map(p => ({ name: p.name, url: null })),
-      },
-    }));
-    localStorage.setItem('hotrema.scaffolds', JSON.stringify(clean));
+    localStorage.setItem('hotrema.scaffolds', JSON.stringify(cleanForSave()));
     localStorage.setItem('hotrema.nextId', String(nextId));
   } catch (e) { /* storage full or blocked — keep running in memory */ }
+}
+
+// ---------- Device sync: share the register as a file, merge it on the other device ----------
+function openSync() {
+  $('syncModal').classList.remove('hidden');
+}
+
+async function exportData() {
+  const json = JSON.stringify({ app: 'hotrema-tracker', exported: Date.now(), scaffolds: cleanForSave() }, null, 1);
+  const file = new File([json], `HotremaData_${new Date().toISOString().slice(0, 10)}.json`, { type: 'application/json' });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], text: 'Hotrema Tracker data file' }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('💾 Data file saved — send it to the other device and load it there');
+}
+
+async function importData(input) {
+  const f = input.files[0];
+  input.value = '';
+  if (!f) return;
+  let data;
+  try { data = JSON.parse(await f.text()); } catch (e) { return toast('⚠️ That is not a valid data file.'); }
+  if (data.app !== 'hotrema-tracker' || !Array.isArray(data.scaffolds)) return toast('⚠️ That is not a Hotrema Tracker data file.');
+
+  let added = 0, updated = 0;
+  data.scaffolds.forEach(inc => {
+    const ex = scaffolds.find(x => x.jobNumber === inc.jobNumber);
+    if (!ex) {
+      inc.id = nextId++;
+      scaffolds.push(inc);
+      added++;
+      return;
+    }
+    // merge histories (dedupe on timestamp + action)
+    const seen = new Set(ex.history.map(h => h.ts + '|' + h.type));
+    (inc.history || []).forEach(h => { if (!seen.has(h.ts + '|' + h.type)) ex.history.push(h); });
+    ex.history.sort((a, b) => a.ts - b.ts);
+    // newest activity wins for the inspection clock, measurements and status
+    if (inc.lastInspected > ex.lastInspected) {
+      ex.lastInspected = inc.lastInspected;
+      ex.dims = inc.dims; ex.volume = inc.volume; ex.unit = inc.unit;
+      ex.status = inc.status;
+    }
+    if (ex.status === 'Active' && inc.status !== 'Active') ex.status = inc.status;
+    if (ex.altitude == null && inc.altitude != null) ex.altitude = inc.altitude;
+    updated++;
+  });
+  renderAll();
+  closeModal('syncModal');
+  toast(`🔄 Sync done — ${added} job(s) added, ${updated} merged`);
 }
 
 // ---------- State ----------
