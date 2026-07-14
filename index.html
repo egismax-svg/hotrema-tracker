@@ -1,0 +1,1834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hotrema Tracker — Scaffolding Management & Inspection</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+
+  /* Print: only the open sheet prints (certificate = landscape, client pack = portrait) */
+  @media print {
+    body * { visibility: hidden !important; }
+    #certSheet, #certSheet *, #packSheet, #packSheet * { visibility: visible !important; }
+    #certSheet, #packSheet {
+      position: absolute; left: 0; top: 0; min-width: 0 !important;
+      margin: 0; box-shadow: none !important;
+    }
+    #certSheet { width: 281mm; padding: 2mm; }
+    #packSheet { width: 194mm; padding: 0; }
+  }
+  .avoid-break { break-inside: avoid; }
+  .val { border-bottom: 1px solid #0f172a; display: inline-block; text-align: center; min-height: 1em; }
+  .cb { font-size: 15px; line-height: 1; }
+  .cert-caption { font-style: italic; font-size: 9px; color: #475569; }
+  .hotrema-logo { color: #1e40af; font-weight: 800; font-style: italic; font-size: 30px; letter-spacing: -1px; font-family: 'Segoe UI', Verdana, sans-serif; }
+  .fade-in { animation: fadeIn .18s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px);} to { opacity: 1; transform: none;} }
+</style>
+<!-- page orientation swapped by printSheet() before printing -->
+<style id="pageStyle">@page { size: A4 landscape; margin: 8mm; }</style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800">
+
+<!-- ======================= TOP BAR ======================= -->
+<header class="bg-white sticky top-0 z-40 shadow-lg border-b-4 border-blue-800">
+  <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+    <div class="flex items-center gap-2.5">
+      <img src="hotrema_logo.png" alt="Hotrema" class="h-8 w-auto">
+      <div>
+        <h1 class="font-bold text-lg leading-tight tracking-[0.2em] text-blue-800">TRACKER</h1>
+        <p class="text-[11px] text-slate-500 leading-tight">Scaffolding Management &amp; Inspection</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-3">
+      <div class="flex bg-blue-50 border border-blue-100 rounded-lg p-1 gap-1">
+        <button id="btnMobileView" onclick="setView('mobile')"
+          class="px-4 py-1.5 rounded-md text-sm font-semibold transition">📱 Inspector Mobile</button>
+        <button id="btnDesktopView" onclick="setView('desktop')"
+          class="px-4 py-1.5 rounded-md text-sm font-semibold transition">🖥️ Office Desktop</button>
+      </div>
+      <div id="userChip" class="hidden items-center gap-2 text-sm">
+        <span class="text-slate-500">👤 <span id="userName" class="font-semibold text-blue-900"></span></span>
+        <button onclick="logout()" class="text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-600 px-2 py-1 rounded-md font-semibold">Log out</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<!-- ======================= INSPECTOR MOBILE VIEW ======================= -->
+<main id="mobileView" class="max-w-md mx-auto p-3 pb-24">
+
+  <!-- Active inspector -->
+  <div class="bg-white rounded-xl shadow-sm p-3 mb-3 flex items-center gap-3">
+    <span class="text-xl">👷</span>
+    <div class="flex-1">
+      <label class="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Active Inspector <span class="normal-case font-normal">(remembered on this device)</span></label>
+      <input id="activeInspector" list="inspectorList" placeholder="Type or pick your name…"
+        class="w-full font-semibold text-slate-800 bg-transparent focus:outline-none"
+        oninput="syncInspectorLabel()" onchange="saveActiveInspector()">
+    </div>
+  </div>
+
+  <!-- Mobile tabs -->
+  <div class="flex bg-slate-200 rounded-lg p-1 gap-1 mb-3">
+    <button id="tabBoard" onclick="setMobileTab('board')" class="flex-1 py-2 rounded-md text-sm font-semibold transition">🗂️ Live Board</button>
+    <button id="tabForm" onclick="setMobileTab('form')" class="flex-1 py-2 rounded-md text-sm font-semibold transition">➕ New Erection</button>
+  </div>
+
+  <!-- ---------- LIVE ACTION BOARD ---------- -->
+  <section id="mobileBoard">
+    <div class="relative mb-3">
+      <span class="absolute left-3 top-2.5 text-slate-400">🔍</span>
+      <input id="searchInput" type="text" placeholder="Search Job #, Request #, or Location…"
+        class="w-full pl-9 pr-3 py-2.5 rounded-xl border border-slate-300 bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+        oninput="state.search = this.value; renderMobileBoard();">
+    </div>
+    <div id="mobileCards" class="space-y-3"></div>
+  </section>
+
+  <!-- ---------- ERECTION FORM ---------- -->
+  <section id="mobileForm" class="hidden">
+    <form id="erectionForm" class="space-y-3" onsubmit="submitErection(event)">
+
+      <div class="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <h2 class="font-bold text-slate-900 flex items-center gap-2">1 · Job Details
+          <span id="internalBadge" class="hidden text-[11px] bg-orange-100 text-orange-700 border border-orange-300 px-2 py-0.5 rounded-full font-semibold">🔧 Internal Build</span>
+        </h2>
+
+        <div>
+          <label class="text-xs font-semibold text-slate-500">Client / Contractor *</label>
+          <input id="fClient" list="clientList" required placeholder="Type or pick — e.g. Hotrema, Altrad…"
+            class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm" oninput="onClientChange()">
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Job # *</label>
+            <input id="fJob" required placeholder="e.g. 2120" class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+            <p class="text-[10px] text-slate-400 mt-0.5">Suggested next number — change if needed.</p>
+          </div>
+          <div id="reqWrap">
+            <label class="text-xs font-semibold text-slate-500">Request # (R-) *</label>
+            <input id="fReq" placeholder="e.g. 56610" class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-[1fr_100px] gap-3">
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Location *</label>
+            <input id="fLocation" required placeholder="e.g. Boiler House East Wall" class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Altitude (m)</label>
+            <input id="fAltitude" type="number" step="0.1" min="0" placeholder="24" class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Supervisor *</label>
+            <input id="fSupervisor" list="supervisorList" required placeholder="Type or pick…"
+              class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+          </div>
+          <div>
+            <label class="text-xs font-semibold text-slate-500">Scaffold Type (J-) *</label>
+            <input id="fType" list="typeList" required placeholder="Type or pick…"
+              class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm" oninput="onTypeChange()">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-3 py-2.5">
+          <span class="text-xs font-semibold text-slate-500">Inspector <span class="font-normal">(from Active Inspector above)</span></span>
+          <span id="formInspectorLabel" class="font-bold text-blue-700 text-sm"></span>
+        </div>
+
+      </div>
+
+      <!-- 4-row volume calculator -->
+      <div class="bg-white rounded-xl shadow-sm p-4 space-y-2">
+        <h2 class="font-bold text-slate-900">2 · Dimensions &amp; Volume</h2>
+        <p id="dimHint" class="text-[11px] text-slate-500">Lines 2.1 – 2.4 as per handover certificate. Each row = H × W × L (m).</p>
+        <div id="dimRows" class="space-y-2"></div>
+        <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-3 mt-2">
+          <span id="volLabel" class="font-semibold text-blue-900 text-sm">Scaffolding Volume Total</span>
+          <span class="font-bold text-blue-900 text-lg"><span id="volTotal">0.00</span> <span id="volUnit">m³</span></span>
+        </div>
+      </div>
+
+      <!-- Photos -->
+      <div class="bg-white rounded-xl shadow-sm p-4 space-y-3">
+        <h2 class="font-bold text-slate-900">3 · Photos</h2>
+        <div class="grid grid-cols-3 gap-2" id="photoGrid">
+          <div>
+            <label for="photoJob" class="photo-box block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-2 text-center text-[11px] text-slate-500 hover:border-blue-400">
+              <span class="text-xl block">📷</span>Job Photo<span id="photoJobName" class="block font-semibold text-emerald-600 truncate"></span>
+            </label>
+            <input id="photoJob" type="file" accept="image/*" class="hidden" onchange="photoPicked(this,'photoJobName')">
+          </div>
+          <div id="reqPhotoWrap">
+            <label for="photoReq" class="photo-box block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-2 text-center text-[11px] text-slate-500 hover:border-blue-400">
+              <span class="text-xl block">📋</span>Request Photo<span id="photoReqName" class="block font-semibold text-emerald-600 truncate"></span>
+            </label>
+            <input id="photoReq" type="file" accept="image/*" class="hidden" onchange="photoPicked(this,'photoReqName')">
+          </div>
+          <div>
+            <label for="photoScaftag" class="photo-box block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-2 text-center text-[11px] text-slate-500 hover:border-blue-400">
+              <span class="text-xl block">🏷️</span>Scaftag Photo<span id="photoScaftagName" class="block font-semibold text-emerald-600 truncate"></span>
+            </label>
+            <input id="photoScaftag" type="file" accept="image/*" class="hidden" onchange="photoPicked(this,'photoScaftagName')">
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button type="submit" onclick="waIntent = false"
+          class="bg-slate-600 hover:bg-slate-700 text-white font-bold py-3 rounded-xl shadow-lg transition text-sm">
+          💾 Submit<span class="block text-[10px] font-normal opacity-80">save only — no WhatsApp</span>
+        </button>
+        <button type="submit" onclick="waIntent = true"
+          class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow-lg transition text-sm">
+          ✅ Submit &amp; Send<span class="block text-[10px] font-normal opacity-80">WhatsApp burst</span>
+        </button>
+      </div>
+    </form>
+  </section>
+</main>
+
+<!-- ======================= OFFICE DESKTOP VIEW ======================= -->
+<main id="desktopView" class="hidden max-w-7xl mx-auto p-4">
+
+  <!-- Stats -->
+  <div class="flex flex-wrap items-center gap-4 mb-4">
+    <div class="flex gap-3 flex-1 flex-wrap">
+      <div class="bg-white rounded-xl shadow-sm p-3 flex-1 min-w-[120px]"><p class="text-[11px] font-semibold text-slate-500 uppercase">Active</p><p id="statActive" class="text-2xl font-bold text-slate-900">0</p></div>
+      <div class="bg-white rounded-xl shadow-sm p-3 flex-1 min-w-[120px]"><p class="text-[11px] font-semibold text-amber-600 uppercase">Due ≤ 2 days</p><p id="statDueSoon" class="text-2xl font-bold text-amber-600">0</p></div>
+      <div class="bg-white rounded-xl shadow-sm p-3 flex-1 min-w-[120px]"><p class="text-[11px] font-semibold text-red-600 uppercase">Overdue</p><p id="statOverdue" class="text-2xl font-bold text-red-600">0</p></div>
+      <div class="bg-white rounded-xl shadow-sm p-3 flex-1 min-w-[120px]"><p class="text-[11px] font-semibold text-blue-600 uppercase">Active Volume</p><p class="text-2xl font-bold text-blue-600"><span id="statVolume">0</span> m³</p></div>
+      <div class="bg-white rounded-xl shadow-sm p-3 flex-1 min-w-[120px]"><p class="text-[11px] font-semibold text-slate-500 uppercase">Dismantled Volume</p><p class="text-2xl font-bold text-slate-500"><span id="statDismVolume">0</span> m³</p></div>
+      <div class="bg-white rounded-xl shadow-sm p-3 flex-1 min-w-[120px]"><p class="text-[11px] font-semibold text-emerald-700 uppercase">Erected Overall</p><p class="text-2xl font-bold text-emerald-700"><span id="statTotalVolume">0</span> m³</p></div>
+    </div>
+  </div>
+
+  <!-- Desktop tabs -->
+  <div class="flex gap-1 bg-slate-200 rounded-lg p-1 w-fit mb-4">
+    <button id="dtabBoard" onclick="setDesktopTab('board')" class="px-5 py-2 rounded-md text-sm font-semibold transition">📋 Tracking Board</button>
+    <button id="dtabCal" onclick="setDesktopTab('cal')" class="px-5 py-2 rounded-md text-sm font-semibold transition">📅 Inspection Calendar</button>
+    <button id="dtabComp" onclick="setDesktopTab('comp')" class="px-5 py-2 rounded-md text-sm font-semibold transition">🏢 Companies</button>
+  </div>
+
+  <!-- Board -->
+  <section id="deskBoard" class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <div class="p-3 border-b border-slate-200 flex items-center justify-between gap-3 flex-wrap">
+      <h2 class="font-bold text-slate-900">Scaffold Register</h2>
+      <button onclick="openWaImport()" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm">📥 Import WhatsApp</button>
+      <div class="relative flex-1 min-w-[220px] max-w-sm">
+        <span class="absolute left-3 top-2 text-slate-400 text-sm">🔍</span>
+        <input id="deskSearch" type="text" placeholder="Search Job #, Request #, Location or Client…"
+          class="w-full pl-9 pr-3 py-1.5 rounded-lg border border-slate-300 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          oninput="state.deskSearch = this.value; renderDesktop();">
+      </div>
+      <label class="text-sm text-slate-600 flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" id="showDismantled" onchange="state.showDismantled = this.checked; renderDesktop();" class="accent-blue-600">
+        Show dismantled / archived
+      </label>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+          <tr>
+            <th class="text-left p-3">Job #</th><th class="text-left p-3">Client</th>
+            <th class="text-left p-3">Request #</th><th class="text-left p-3">Location</th>
+            <th class="text-left p-3">Type</th><th class="text-right p-3">Volume / Length</th>
+            <th class="text-left p-3">Next Check</th><th class="text-left p-3">Status</th>
+            <th class="text-right p-3">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="deskTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Calendar -->
+  <section id="deskCal" class="hidden bg-white rounded-xl shadow-sm p-4">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="font-bold text-slate-900">Inspection Due Dates <span class="text-slate-400 font-normal text-sm">(7-day clocks)</span></h2>
+      <div class="flex items-center gap-2">
+        <button onclick="state.calOffset--; renderCalendar();" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold">‹</button>
+        <span id="calTitle" class="font-semibold w-40 text-center"></span>
+        <button onclick="state.calOffset++; renderCalendar();" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold">›</button>
+      </div>
+    </div>
+    <div class="grid grid-cols-7 text-center text-[11px] font-bold text-slate-400 uppercase mb-1">
+      <div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div><div>Sun</div>
+    </div>
+    <div id="calGrid" class="grid grid-cols-7 gap-1"></div>
+    <div class="flex gap-4 mt-3 text-xs text-slate-500">
+      <span><span class="inline-block w-3 h-3 rounded bg-red-500 align-middle mr-1"></span>Overdue</span>
+      <span><span class="inline-block w-3 h-3 rounded bg-amber-400 align-middle mr-1"></span>Due ≤ 2 days</span>
+      <span><span class="inline-block w-3 h-3 rounded bg-emerald-500 align-middle mr-1"></span>Scheduled</span>
+    </div>
+  </section>
+
+  <!-- Company volumes -->
+  <section id="deskCompanies" class="hidden bg-white rounded-xl shadow-sm overflow-hidden">
+    <div class="p-3 border-b border-slate-200">
+      <h2 class="font-bold text-slate-900">Company Volumes — <span id="compProject" class="text-blue-700"></span></h2>
+      <p class="text-[11px] text-slate-500">Cubic metres per client on this project. Handrail jobs are tracked in linear metres separately.</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+          <tr>
+            <th class="text-left p-3">Company</th><th class="text-right p-3">Jobs</th>
+            <th class="text-right p-3">Standing m³</th><th class="text-right p-3">Dismantled m³</th>
+            <th class="text-right p-3">Erected Total m³</th><th class="text-right p-3">Handrails m</th>
+          </tr>
+        </thead>
+        <tbody id="compTableBody"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<!-- ======================= MODIFICATION MODAL ======================= -->
+<div id="modModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 fade-in">
+    <h3 class="font-bold text-lg mb-1">🔧 Log Modification Done</h3>
+    <p id="modJobLabel" class="text-sm text-slate-500 mb-4"></p>
+    <div class="space-y-3">
+      <div>
+        <label class="text-xs font-semibold text-slate-500">Description of modification *</label>
+        <textarea id="modDesc" rows="3" class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm" placeholder="e.g. Extra lift added on east elevation"></textarea>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-slate-500">Request # for this modification <span class="font-normal">(optional)</span></label>
+        <input id="modReq" placeholder="e.g. 56720" class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+        <p class="text-[10px] text-slate-400 mt-0.5">If the client raised a request for this mod, enter it — it is kept in the tracker.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-2">
+        <div>
+          <label for="modPhotoJob" class="block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-2 text-center text-[11px] text-slate-500 hover:border-blue-400">
+            <span class="text-lg block">📷</span>Job Photo *<span id="modPhotoJobName" class="block font-semibold text-emerald-600 truncate"></span>
+          </label>
+          <input id="modPhotoJob" type="file" accept="image/*" class="hidden" onchange="photoPicked(this,'modPhotoJobName')">
+        </div>
+        <div id="modReqPhotoWrap">
+          <label for="modPhotoReq" class="block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-2 text-center text-[11px] text-slate-500 hover:border-blue-400">
+            <span class="text-lg block">📋</span>Request Photo *<span id="modPhotoReqName" class="block font-semibold text-emerald-600 truncate"></span>
+          </label>
+          <input id="modPhotoReq" type="file" accept="image/*" class="hidden" onchange="photoPicked(this,'modPhotoReqName')">
+        </div>
+      </div>
+      <div>
+        <label class="text-xs font-semibold text-slate-500">Inspector *</label>
+        <input id="modInspector" list="inspectorList" placeholder="Type or pick…" class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+      </div>
+    </div>
+    <div class="flex gap-2 mt-5">
+      <button onclick="closeModal('modModal')" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-sm">Cancel</button>
+      <button onclick="saveModification()" class="flex-1 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold text-sm">Save &amp; Reset 7-Day Clock</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= WHATSAPP BURST MODAL ======================= -->
+<div id="waModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-[#e5ddd5] rounded-2xl shadow-2xl w-full max-w-md overflow-hidden fade-in">
+    <div class="bg-[#075e54] text-white p-3 flex items-center gap-2">
+      <span class="text-xl">💬</span>
+      <div><p class="font-bold text-sm">Scaffold Site Group</p><p class="text-[11px] text-emerald-100">Simulated automated message burst</p></div>
+    </div>
+    <div id="waList" class="p-4 space-y-2 max-h-80 overflow-y-auto"></div>
+    <div class="p-3 bg-white flex gap-2">
+      <button onclick="closeModal('waModal')" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm">Done</button>
+      <button onclick="window.open('https://wa.me/?text=' + encodeURIComponent(lastWaText), '_blank')"
+        class="flex-1 py-2.5 rounded-xl bg-[#075e54] hover:bg-[#0a6e62] text-white font-semibold text-sm">💬 Open WhatsApp</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= HANDOVER CERTIFICATE MODAL ======================= -->
+<div id="certModal" class="hidden fixed inset-0 bg-black/60 z-50 overflow-y-auto p-4">
+  <div class="max-w-[1120px] mx-auto">
+    <div class="flex justify-end gap-2 mb-2 print:hidden">
+      <button onclick="downloadCertPdf()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow">⬇ Download PDF</button>
+      <button onclick="printSheet('landscape')" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow">🖨️ Print</button>
+      <button onclick="closeModal('certModal')" class="px-4 py-2 rounded-lg bg-white hover:bg-slate-100 font-semibold text-sm shadow">✕ Close</button>
+    </div>
+    <div class="overflow-x-auto"><div id="certSheet" class="bg-white shadow-2xl p-6 text-[12px] leading-snug text-slate-900 min-w-[1000px]" style="font-family: Calibri, 'Segoe UI', sans-serif;"></div></div>
+  </div>
+</div>
+
+<!-- ======================= CLIENT PACK MODAL (A4 portrait PDF) ======================= -->
+<div id="packModal" class="hidden fixed inset-0 bg-black/60 z-50 overflow-y-auto p-4">
+  <div class="max-w-[840px] mx-auto">
+    <div class="flex justify-end gap-2 mb-2 print:hidden">
+      <button onclick="downloadPackPdf()" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm shadow">⬇ Download PDF</button>
+      <button onclick="printSheet('portrait')" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm shadow">🖨️ Print</button>
+      <button onclick="closeModal('packModal')" class="px-4 py-2 rounded-lg bg-white hover:bg-slate-100 font-semibold text-sm shadow">✕ Close</button>
+    </div>
+    <div id="packSheet" class="bg-white shadow-2xl p-8 text-[12px] leading-snug text-slate-900"></div>
+  </div>
+</div>
+
+<!-- ======================= JOB DETAIL MODAL ======================= -->
+<div id="jobModal" class="hidden fixed inset-0 bg-black/50 z-50 overflow-y-auto p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-2xl mx-auto p-5 fade-in my-6">
+    <div class="flex items-start justify-between gap-3">
+      <div>
+        <h3 id="jobModalTitle" class="font-bold text-lg"></h3>
+        <p id="jobModalSub" class="text-sm text-slate-500"></p>
+      </div>
+      <button onclick="closeModal('jobModal')" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 font-semibold text-sm shrink-0">✕ Close</button>
+    </div>
+    <div id="jobModalBody" class="mt-4"></div>
+    <div class="mt-4 flex gap-2 flex-wrap">
+      <label for="jobModalPhoto" class="cursor-pointer px-3 py-2 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold">📷 Add / replace job photo</label>
+      <input id="jobModalPhoto" type="file" accept="image/*" class="hidden" onchange="jobDetailPhotoPicked(this)">
+      <button onclick="closeModal('jobModal'); openCert(state.detailId)" class="px-3 py-2 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold">📄 Handover Certificate</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= QR CODE MODAL ======================= -->
+<div id="qrModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-xs p-5 text-center fade-in">
+    <h3 class="font-bold text-lg mb-1">🔳 Scaffold QR Code</h3>
+    <p id="qrJobLabel" class="text-sm text-slate-500 mb-3"></p>
+    <div id="qrBox" class="flex justify-center"></div>
+    <p class="text-[11px] text-slate-500 mt-3">Print this and stick it on the scaftag — scanning it opens the inspection screen for this scaffold.</p>
+    <p id="qrLink" class="text-[10px] text-slate-400 mt-1 break-all"></p>
+    <div class="flex gap-2 mt-4">
+      <button onclick="closeModal('qrModal')" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-sm">Close</button>
+      <a id="qrDownload" class="flex-1 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-sm">⬇ Download</a>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= EDIT MEASUREMENTS MODAL ======================= -->
+<div id="editModal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md p-5 fade-in">
+    <h3 class="font-bold text-lg mb-1">📐 Edit Measurements</h3>
+    <p id="editJobLabel" class="text-sm text-slate-500"></p>
+    <p id="editHint" class="text-[11px] text-slate-400 mt-1"></p>
+    <div id="editRows" class="space-y-2 mt-3"></div>
+    <div class="flex items-center justify-between bg-blue-50 border border-blue-200 rounded-lg p-3 mt-3">
+      <span class="font-semibold text-blue-900 text-sm">New total</span>
+      <span class="font-bold text-blue-900 text-lg"><span id="editVolTotal">0.00</span> <span id="editVolUnit">m³</span></span>
+    </div>
+    <div class="flex gap-2 mt-5">
+      <button onclick="closeModal('editModal')" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-sm">Cancel</button>
+      <button onclick="saveEdit()" class="flex-1 py-2.5 rounded-xl bg-purple-600 hover:bg-purple-700 text-white font-semibold text-sm">💾 Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= WHATSAPP IMPORT MODAL ======================= -->
+<div id="waImportModal" class="hidden fixed inset-0 bg-black/50 z-50 overflow-y-auto p-4">
+  <div class="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-auto p-5 fade-in my-6">
+    <h3 class="font-bold text-lg mb-1">📥 Import WhatsApp Chat</h3>
+    <p class="text-sm text-slate-500 mb-4">Export the site group chat from WhatsApp (<b>with media</b>) and upload it here. Pictures are matched to their jobs and appear on the handover certificates.</p>
+    <div class="space-y-3">
+      <div>
+        <label for="waChatFile" class="block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-3 text-center text-xs text-slate-500 hover:border-emerald-500">
+          <span class="text-xl block">💬</span>Chat export — <b>.zip</b> (with media) or <b>_chat.txt</b>
+          <span id="waChatFileName" class="block font-semibold text-emerald-600 truncate"></span>
+        </label>
+        <input id="waChatFile" type="file" accept=".zip,.txt,text/plain,application/zip" class="hidden" onchange="photoPicked(this,'waChatFileName')">
+      </div>
+      <div>
+        <label for="waMediaFiles" class="block cursor-pointer border-2 border-dashed border-slate-300 rounded-lg p-3 text-center text-xs text-slate-500 hover:border-emerald-500">
+          <span class="text-xl block">🖼️</span>Pictures from the export folder <span class="font-normal">(optional if you upload the .zip)</span>
+          <span id="waMediaFilesName" class="block font-semibold text-emerald-600 truncate"></span>
+        </label>
+        <input id="waMediaFiles" type="file" accept="image/*" multiple class="hidden"
+          onchange="$('waMediaFilesName').textContent = this.files.length ? this.files.length + ' picture(s) selected' : ''">
+      </div>
+      <p class="text-[11px] text-slate-400">Scaffolds are imported into <b id="waImportProject"></b>. Existing job numbers are updated, new ones are added.</p>
+      <div id="waImportResult" class="hidden text-xs bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-lg p-3 whitespace-pre-line font-semibold"></div>
+    </div>
+    <div class="flex gap-2 mt-5">
+      <button onclick="closeModal('waImportModal')" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 font-semibold text-sm">Close</button>
+      <button id="waImportBtn" onclick="runWaImport()" class="flex-1 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm">📥 Import</button>
+    </div>
+  </div>
+</div>
+
+<!-- ======================= LOGIN OVERLAY ======================= -->
+<div id="loginOverlay" class="hidden fixed inset-0 bg-blue-950 z-[70] flex items-center justify-center p-4">
+  <form onsubmit="tryLogin(event)" class="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-4 fade-in">
+    <div class="text-center">
+      <img src="hotrema_logo.png" alt="Hotrema" class="h-10 w-auto mx-auto">
+      <h2 class="font-bold text-lg tracking-[0.3em] text-blue-800 mt-1">TRACKER</h2>
+      <p class="text-xs text-slate-500">Sign in to continue</p>
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-slate-500">Full name *</label>
+      <input id="loginName" required placeholder="e.g. Danas Petrauskas" autocomplete="name"
+        class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+    </div>
+    <div>
+      <label class="text-xs font-semibold text-slate-500">Password *</label>
+      <input id="loginPass" type="password" required placeholder="••••••••"
+        class="w-full mt-1 p-2.5 rounded-lg border border-slate-300 text-sm">
+    </div>
+    <p id="loginError" class="hidden text-sm text-red-600 font-semibold"></p>
+    <button type="submit" class="w-full py-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm shadow-lg">🔓 Log in</button>
+    <p class="text-[11px] text-slate-400 text-center">Access is limited to authorised staff. Ask the office for the password.</p>
+  </form>
+</div>
+
+<!-- Type-or-pick suggestion lists -->
+<datalist id="inspectorList"></datalist>
+<datalist id="clientList"></datalist>
+<datalist id="supervisorList"></datalist>
+<datalist id="typeList"></datalist>
+
+<!-- Toast -->
+<div id="toast" class="hidden fixed bottom-5 left-1/2 -translate-x-1/2 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl z-[60] text-sm font-semibold fade-in"></div>
+
+<script>
+/* ================================================================
+   HOTREMA TRACKER — application logic
+   ================================================================ */
+
+// ---------- Reference data ----------
+const INSPECTORS  = ['Danas', 'Gints', 'Linas', 'Lukas', 'Stu', 'Dovydas', 'Seiranas'];
+const SUPERVISORS = ['Marius', 'Tomas', 'Andrius', 'Paul'];
+const CLIENTS     = ['Hotrema', 'Altrad', 'Kaefer', 'Bilfinger', 'Wood Group'];
+const TYPES       = ['Independent Tower', 'Birdcage', 'Cantilever', 'Staircase Access', 'Hanging Scaffold', 'Mobile Tower', 'Handrails'];
+const SITE        = 'LOSTOCK 2112SC';   // single site — change here when the site changes
+
+// The exact 16-point standards list from the Hotrema Excel handover sheet.
+// `na: true` = ticked in the N/A column by default instead of Yes.
+const CHECKLIST = [
+  { text: 'Stable, straight base surface' },
+  { text: 'Scaffolding base is levelled and properly supported with boards' },
+  { text: 'Sufficient number of braces installed' },
+  { text: 'Working platform has guardrails (1.0 m and 0.5 m in height)' },
+  { text: 'Gaps in platforms do not exceed 25 mm' },
+  { text: 'Scaffolding is anchored to a stable structure' },
+  { text: 'Proper sideboards are in place' },
+  { text: 'Metal perforated grating completely covers the platform' },
+  { text: 'Safe access to the scaffolding' },
+  { text: 'All connection points are stiff and securely fixed' },
+  { text: 'Scaff tag is completely filled in' },
+  { text: 'Scaffolding is safe for use; any hazardous areas are marked, noticed' },
+  { text: 'Compliant with WAHR 2005 &amp; TG30:21 regulations' },
+  { text: 'TG30 Duty Class (Light / Medium / Heavy): __________' },
+  { text: 'Design drawing reference (if applicable): __________', na: true },
+  { text: 'Next inspection due: <u>&nbsp;7&nbsp;</u> Days\\adverse\\weather\\alterations' },
+];
+
+const DAY = 86400000;
+const INSPECT_INTERVAL = 7; // days
+
+// ---------- Helpers ----------
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const daysAgo = n => Date.now() - n * DAY;
+const fmtDate = ts => new Date(ts).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+const fmtDateTime = ts => new Date(ts).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+const vol = dims => Math.round(dims.reduce((sum, d) => sum + (d.h * d.w * d.l), 0) * 100) / 100;
+
+function dueInfo(s) {
+  const due = s.lastInspected + INSPECT_INTERVAL * DAY;
+  const daysLeft = Math.ceil((due - Date.now()) / DAY);
+  let label, pill;
+  if (daysLeft < 0)       { label = `Overdue ${-daysLeft}d`; pill = 'bg-red-100 text-red-700 border-red-300'; }
+  else if (daysLeft === 0){ label = 'Due today';             pill = 'bg-red-100 text-red-700 border-red-300'; }
+  else if (daysLeft <= 2) { label = `${daysLeft}d left`;     pill = 'bg-amber-100 text-amber-700 border-amber-300'; }
+  else                    { label = `${daysLeft}d left`;     pill = 'bg-emerald-100 text-emerald-700 border-emerald-300'; }
+  return { due, daysLeft, label, pill };
+}
+
+const isHotrema = client => /hotrema/i.test(client || '');
+// Handrail jobs are measured in linear metres (length only), not m³
+const isHandrail = type => /han+d?rail/i.test(type || '');
+
+// ---------- Mock data (parsed-Python-output shape) ----------
+let nextId = 1;
+function mk(project, jobNumber, client, location, requestNumber, supervisor, type, inspector, dims, lastInspDaysAgo, erectedDaysAgo, status = 'Active') {
+  const erectedAt = daysAgo(erectedDaysAgo);
+  const s = {
+    id: nextId++, project, jobNumber, client, location,
+    requestNumber: isHotrema(client) ? null : requestNumber,
+    supervisor, type, inspector, dims,
+    altitude: null,
+    volume: isHandrail(type) ? Math.round(dims.reduce((t, d) => t + d.l, 0) * 100) / 100 : vol(dims),
+    unit: isHandrail(type) ? 'm' : 'm³',
+    erectedAt, lastInspected: daysAgo(lastInspDaysAgo), status,
+    photos: { job: `job_${jobNumber}.jpg`, request: isHotrema(client) ? null : `request_${jobNumber}.jpg`, scaftag: `scaftag_${jobNumber}.jpg` },
+    history: [{ ts: erectedAt, type: 'Erected', inspector, note: `Erected & handed over by ${supervisor}` }]
+  };
+  return s;
+}
+
+function demoData() {
+  const list = [
+    mk(SITE, '2101', 'Hotrema',    'Workshop Mezzanine',      null,    'Tomas',   'Mobile Tower',      'Danas',    [{h:3.6,w:1.05,l:4.4}], 8, 40),                       // OVERDUE
+    mk(SITE, '2115', 'Wood Group', 'Flare Stack Access',      '56501', 'Paul',    'Hanging Scaffold',  'Lukas',    [{h:18,w:1.2,l:7.5},{h:4,w:1.2,l:3}], 6, 25),        // due tomorrow
+    mk(SITE, '2118', 'Altrad',     'Boiler House East Wall',  '56544', 'Marius',  'Independent Tower', 'Gints',    [{h:8.5,w:1.2,l:12},{h:2,w:1.2,l:6}], 5, 18),
+    mk(SITE, '2124', 'Kaefer',     'Tank Farm T-7 Stairs',    '56590', 'Marius',  'Staircase Access',  'Linas',    [{h:6,w:2.4,l:9.15}], 1, 9),
+    mk(SITE, '2093', 'Bilfinger',  'Cooling Tower Base',      '56230', 'Andrius', 'Cantilever',        'Stu',      [{h:12.25,w:1.5,l:20}], 3, 60, 'Dismantled'),
+    mk(SITE, '3010', 'Bilfinger',  'Acid Plant Pipe Rack',    '77012', 'Andrius', 'Birdcage',          'Dovydas',  [{h:5.5,w:4,l:10},{h:2.5,w:4,l:10}], 7, 30),          // due today
+    mk(SITE, '3014', 'Hotrema',    'Compressor Shed Roof',    null,    'Tomas',   'Birdcage',          'Seiranas', [{h:4.25,w:0.7,l:6.3}], 2, 12),
+    mk(SITE, '7801', 'Altrad',     'Jetty Walkway North',     '81005', 'Paul',    'Independent Tower', 'Stu',      [{h:9,w:1.2,l:30},{h:3,w:1.2,l:15},{h:2,w:1.2,l:8}], 4, 21),
+    mk(SITE, '2130', 'Hotrema',    'Walkway Edge Protection', null,    'Tomas',   'Handrails',         'Danas',    [{h:0,w:0,l:18},{h:0,w:0,l:7.5}], 2, 5),
+  ];
+  // seed some history so timelines & client packs look real
+  list[1].history.push({ ts: daysAgo(6), type: 'Verified Safe', inspector: 'Lukas', note: 'Weekly statutory check — all safe' });
+  list[2].history.push({ ts: daysAgo(12), type: 'Modification', inspector: 'Gints', note: 'Extra lift added on east elevation', photos: ['job_2118_mod1.jpg', 'request_2118_mod1.jpg'] });
+  list[2].history.push({ ts: daysAgo(5), type: 'Verified Safe', inspector: 'Gints', note: 'Weekly statutory check — all safe' });
+  list[4].history.push({ ts: daysAgo(3), type: 'Dismantled', inspector: 'Stu', note: 'Job complete — area cleared' });
+  list[4].status = 'Dismantled';
+  list[0].altitude = 6; list[1].altitude = 24; list[2].altitude = 12; list[5].altitude = 18;
+  return list;
+}
+
+// ---------- Persistence: the register is saved on this device automatically ----------
+const IS_LOCAL = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.protocol === 'file:';
+let scaffolds;
+const savedScaffolds = localStorage.getItem('hotrema.scaffolds');
+if (savedScaffolds) {
+  scaffolds = JSON.parse(savedScaffolds);
+  nextId = parseInt(localStorage.getItem('hotrema.nextId'), 10) || (Math.max(0, ...scaffolds.map(s => s.id || 0)) + 1);
+} else {
+  // live site starts with an empty register; localhost / opened-file gets demo data
+  scaffolds = IS_LOCAL ? demoData() : [];
+}
+
+function persist() {
+  try {
+    // blob photo URLs cannot survive a reload — keep the filenames, drop the URLs
+    const clean = scaffolds.map(s => ({
+      ...s,
+      photos: {
+        ...s.photos,
+        jobUrl: null, requestUrl: null, scaftagUrl: null,
+        extra: (s.photos.extra || []).map(p => ({ name: p.name, url: null })),
+      },
+    }));
+    localStorage.setItem('hotrema.scaffolds', JSON.stringify(clean));
+    localStorage.setItem('hotrema.nextId', String(nextId));
+  } catch (e) { /* storage full or blocked — keep running in memory */ }
+}
+
+// ---------- State ----------
+const state = {
+  view: 'mobile', mobileTab: 'board', desktopTab: 'board',
+  search: '', deskSearch: '', showDismantled: false,
+  calOffset: 0, modTargetId: null, editTargetId: null, detailId: null,
+};
+let waIntent = true;   // set by whichever submit button was clicked
+let lastWaText = '';   // last scaffold info text, for the "Open WhatsApp" button
+let currentUser = null; // full name of the logged-in user
+
+// ---------- Login ----------
+const APP_PASSWORD = 'scaff2026';   // change this to rotate access
+
+function tryLogin(e) {
+  e.preventDefault();
+  const name = $('loginName').value.trim().replace(/\s+/g, ' ');
+  const pass = $('loginPass').value;
+  const err = $('loginError');
+  if (name.split(' ').length < 2) {
+    err.textContent = '⚠️ Enter your full name — first and last.';
+    err.classList.remove('hidden');
+    return;
+  }
+  if (pass !== APP_PASSWORD) {
+    err.textContent = '⚠️ Wrong password.';
+    err.classList.remove('hidden');
+    return;
+  }
+  localStorage.setItem('scafftrack.user', name);
+  applyLogin(name);
+  toast(`🔓 Welcome, ${name}`);
+}
+
+function applyLogin(name) {
+  currentUser = name;
+  $('loginOverlay').classList.add('hidden');
+  $('userChip').classList.remove('hidden');
+  $('userChip').classList.add('flex');
+  $('userName').textContent = name;
+  // default the active inspector to the user's first name if nothing is set yet
+  if (!$('activeInspector').value.trim()) {
+    $('activeInspector').value = name.split(' ')[0];
+    syncInspectorLabel();
+  }
+}
+
+function logout() {
+  localStorage.removeItem('scafftrack.user');
+  location.reload();
+}
+
+// ---------- View switching ----------
+function setView(v) {
+  state.view = v;
+  $('mobileView').classList.toggle('hidden', v !== 'mobile');
+  $('desktopView').classList.toggle('hidden', v !== 'desktop');
+  const on = 'bg-blue-700 text-white', off = 'text-slate-500 hover:bg-blue-100';
+  $('btnMobileView').className = `px-4 py-1.5 rounded-md text-sm font-semibold transition ${v === 'mobile' ? on : off}`;
+  $('btnDesktopView').className = `px-4 py-1.5 rounded-md text-sm font-semibold transition ${v === 'desktop' ? on : off}`;
+  renderAll();
+}
+
+function setMobileTab(t) {
+  state.mobileTab = t;
+  $('mobileBoard').classList.toggle('hidden', t !== 'board');
+  $('mobileForm').classList.toggle('hidden', t !== 'form');
+  const on = 'flex-1 py-2 rounded-md text-sm font-semibold transition bg-white shadow text-blue-700';
+  const off = 'flex-1 py-2 rounded-md text-sm font-semibold transition text-slate-500';
+  $('tabBoard').className = t === 'board' ? on : off;
+  $('tabForm').className  = t === 'form'  ? on : off;
+  if (t === 'form') applyJobSuggestion();
+}
+
+function setDesktopTab(t) {
+  state.desktopTab = t;
+  $('deskBoard').classList.toggle('hidden', t !== 'board');
+  $('deskCal').classList.toggle('hidden', t !== 'cal');
+  $('deskCompanies').classList.toggle('hidden', t !== 'comp');
+  const on = 'px-5 py-2 rounded-md text-sm font-semibold transition bg-white shadow text-blue-700';
+  const off = 'px-5 py-2 rounded-md text-sm font-semibold transition text-slate-500';
+  $('dtabBoard').className = t === 'board' ? on : off;
+  $('dtabCal').className   = t === 'cal'   ? on : off;
+  $('dtabComp').className  = t === 'comp'  ? on : off;
+  if (t === 'cal') renderCalendar();
+  if (t === 'comp') renderCompanies();
+}
+
+// ---------- Mobile: live action board ----------
+function renderMobileBoard() {
+  const q = state.search.trim().toLowerCase();
+  const list = scaffolds.filter(s => s.status === 'Active').filter(s =>
+    !q || s.jobNumber.toLowerCase().includes(q)
+      || (s.requestNumber || '').toLowerCase().includes(q)
+      || s.location.toLowerCase().includes(q)
+  );
+  const box = $('mobileCards');
+  if (!list.length) {
+    box.innerHTML = `<div class="text-center text-slate-400 py-10 text-sm">No active scaffolds match your search.</div>`;
+    return;
+  }
+  box.innerHTML = list.map(s => {
+    const d = dueInfo(s);
+    const open = state.openCardId === s.id;
+    return `
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden fade-in">
+      <button class="w-full text-left p-4" onclick="toggleCard(${s.id})">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <p class="font-bold text-slate-900">Job ${esc(s.jobNumber)}</p>
+            <p class="text-sm text-slate-600">${esc(s.location)}</p>
+            <p class="text-xs text-slate-500 mt-1">
+              ${esc(s.client)} ·
+              ${s.requestNumber ? 'R-' + esc(s.requestNumber) : '<span class="text-orange-600 font-semibold">Internal Build</span>'}
+              · ${esc(s.type)} · ${s.volume.toFixed(2)} ${s.unit || 'm³'}
+            </p>
+          </div>
+          <span class="shrink-0 text-[11px] font-bold px-2.5 py-1 rounded-full border ${d.pill}">${d.label}</span>
+        </div>
+        <p class="text-[11px] text-slate-400 mt-2">Last checked ${fmtDate(s.lastInspected)} · Next due ${fmtDate(d.due)} · ${s.history.length} log entries</p>
+      </button>
+      ${open ? `
+      <div class="border-t border-slate-100 p-3 grid grid-cols-3 gap-2 bg-slate-50">
+        <button onclick="verifySafe(${s.id})" class="py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold">✅ Verify<br>Safe</button>
+        <button onclick="openModModal(${s.id})" class="py-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold">🔧 Log Mod<br>Done</button>
+        <button onclick="dismantle(${s.id})" class="py-2.5 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-bold">🧨 Dismantle<br>+ WhatsApp</button>
+        <div class="col-span-3 bg-white rounded-lg p-2 max-h-32 overflow-y-auto border border-slate-200">
+          ${s.history.slice().reverse().map(h => `
+            <p class="text-[11px] text-slate-600 py-0.5 border-b border-slate-50 last:border-0">
+              <span class="font-semibold">${fmtDateTime(h.ts)}</span> — ${esc(h.type)} by <span class="font-semibold">${esc(h.inspector)}</span>${h.requestNumber ? ' · <span class="font-semibold text-blue-700">R-' + esc(h.requestNumber) + '</span>' : ''}${h.note ? ' · ' + esc(h.note) : ''}
+            </p>`).join('')}
+        </div>
+      </div>` : ''}
+    </div>`;
+  }).join('');
+}
+
+function toggleCard(id) {
+  state.openCardId = state.openCardId === id ? null : id;
+  renderMobileBoard();
+}
+
+// ---------- Card actions ----------
+function verifySafe(id) {
+  const s = scaffolds.find(x => x.id === id);
+  const inspector = $('activeInspector').value;
+  // warn if this scaffold has already been inspected today
+  const inspectedToday = s.history.some(h =>
+    (h.type === 'Verified Safe' || h.type === 'Modification' || h.type === 'Erected') &&
+    new Date(h.ts).toDateString() === new Date().toDateString());
+  if (inspectedToday) {
+    if (!confirm(`⚠️ Job ${s.jobNumber} was already inspected today (last check: ${fmtDateTime(s.lastInspected)}).\n\nProceed with a repeated inspection?`)) {
+      toast(`↩️ Repeated inspection cancelled for Job ${s.jobNumber}`);
+      return;
+    }
+  }
+  s.lastInspected = Date.now();
+  s.history.push({ ts: Date.now(), type: 'Verified Safe', inspector, note: 'Weekly statutory check — all safe' });
+  renderAll();
+  toast(`✅ Job ${s.jobNumber}: 7-day clock reset — logged by ${inspector}`);
+  // Quiet action: NO WhatsApp message.
+}
+
+function openModModal(id) {
+  const s = scaffolds.find(x => x.id === id);
+  state.modTargetId = id;
+  $('modJobLabel').textContent = `Job ${s.jobNumber} — ${s.location}` + (isHotrema(s.client) ? ' (Internal Build — no request photo needed)' : '');
+  $('modDesc').value = '';
+  $('modReq').value = '';
+  $('modPhotoJob').value = ''; $('modPhotoJobName').textContent = '';
+  $('modPhotoReq').value = ''; $('modPhotoReqName').textContent = '';
+  $('modReqPhotoWrap').classList.toggle('hidden', isHotrema(s.client));
+  $('modInspector').value = $('activeInspector').value;
+  $('modModal').classList.remove('hidden');
+}
+
+function saveModification() {
+  const s = scaffolds.find(x => x.id === state.modTargetId);
+  const desc = $('modDesc').value.trim();
+  const jobPhoto = $('modPhotoJob').files[0];
+  const reqPhoto = $('modPhotoReq').files[0];
+  const inspector = $('modInspector').value.trim();
+  if (!desc)      return toast('⚠️ Please describe the modification.');
+  if (!inspector) return toast('⚠️ Inspector name is required.');
+  if (!jobPhoto)  return toast('⚠️ Job photo is required.');
+  if (!isHotrema(s.client) && !reqPhoto) return toast('⚠️ Request photo is required for client builds.');
+
+  const photos = [jobPhoto.name];
+  if (reqPhoto && !isHotrema(s.client)) photos.push(reqPhoto.name);
+  const modReq = $('modReq').value.trim();
+  s.lastInspected = Date.now();
+  s.history.push({ ts: Date.now(), type: 'Modification', inspector, note: desc, photos, requestNumber: modReq || null });
+  closeModal('modModal');
+  renderAll();
+  toast(`🔧 Job ${s.jobNumber}: modification logged${modReq ? ' (R-' + modReq + ')' : ''}, 7-day clock reset — ${inspector}`);
+  // Quiet action: NO WhatsApp message.
+}
+
+function dismantle(id) {
+  const s = scaffolds.find(x => x.id === id);
+  if (!confirm(`Dismantle Job ${s.jobNumber} — ${s.location}?\n\nThis archives the job.`)) return;
+  const inspector = $('activeInspector').value;
+  s.status = 'Dismantled';
+  s.history.push({ ts: Date.now(), type: 'Dismantled', inspector, note: 'Job archived via mobile app' });
+  state.openCardId = null;
+  renderAll();
+  // WhatsApp is optional — ask before opening it
+  if (confirm('Send the dismantle message on WhatsApp?')) {
+    const text = `Dismantled: Job ${s.jobNumber} - ${s.location}`;
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank');
+    toast(`🧨 Job ${s.jobNumber} archived — WhatsApp opened`);
+  } else {
+    toast(`🧨 Job ${s.jobNumber} archived — no WhatsApp sent`);
+  }
+}
+
+// ---------- Erection form ----------
+function buildDimRows() {
+  const dimInput = (id, ph) =>
+    `<input id="${id}" type="number" step="0.01" min="0" inputmode="decimal" placeholder="${ph}"
+       class="dim w-full min-w-0 px-1 py-2 rounded-lg border border-slate-300 text-sm text-center" oninput="recalcVolume()">`;
+  $('dimRows').innerHTML = [1, 2, 3, 4].map(i => `
+    <div class="grid grid-cols-[26px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_46px] gap-1 items-center">
+      <span class="text-[11px] font-bold text-slate-400">2.${i}</span>
+      ${dimInput('h' + i, 'H')}${dimInput('w' + i, 'W')}${dimInput('l' + i, 'L')}
+      <span id="rowRes${i}" class="text-[11px] font-semibold text-slate-500 text-right truncate">0.00</span>
+    </div>`).join('');
+}
+
+const formIsHandrail = () => isHandrail($('fType').value);
+
+function readDims() {
+  const hr = formIsHandrail();
+  const rows = [];
+  for (let i = 1; i <= 4; i++) {
+    const h = parseFloat($('h' + i).value), w = parseFloat($('w' + i).value), l = parseFloat($('l' + i).value);
+    if (hr) { if (l > 0) rows.push({ h: 0, w: 0, l, line: `2.${i}` }); }
+    else if (h > 0 && w > 0 && l > 0) rows.push({ h, w, l, line: `2.${i}` });
+  }
+  return rows;
+}
+
+function recalcVolume() {
+  const hr = formIsHandrail();
+  let total = 0;
+  for (let i = 1; i <= 4; i++) {
+    const h = parseFloat($('h' + i).value) || 0, w = parseFloat($('w' + i).value) || 0, l = parseFloat($('l' + i).value) || 0;
+    const rowVol = hr ? l : h * w * l;
+    $('rowRes' + i).textContent = rowVol.toFixed(2);
+    total += rowVol;
+  }
+  $('volTotal').textContent = (Math.round(total * 100) / 100).toFixed(2);
+}
+
+function onTypeChange() {
+  const hr = formIsHandrail();
+  for (let i = 1; i <= 4; i++) {
+    ['h', 'w'].forEach(p => {
+      const el = $(p + i);
+      el.disabled = hr;
+      el.classList.toggle('opacity-40', hr);
+      if (hr) el.value = '';
+    });
+  }
+  $('dimHint').textContent = hr
+    ? 'Handrails: enter only the length (m) of each run — the total is linear metres.'
+    : 'Lines 2.1 – 2.4 as per handover certificate. Each row = H × W × L (m).';
+  $('volLabel').textContent = hr ? 'Handrail Length Total' : 'Scaffolding Volume Total';
+  $('volUnit').textContent = hr ? 'm' : 'm³';
+  recalcVolume();
+}
+
+function onClientChange() {
+  const hot = isHotrema($('fClient').value);
+  $('reqWrap').classList.toggle('hidden', hot);
+  $('reqPhotoWrap').classList.toggle('hidden', hot);
+  $('internalBadge').classList.toggle('hidden', !hot);
+  $('fReq').required = !hot;
+  if (hot) $('fReq').value = '';
+}
+
+function photoPicked(input, nameId) {
+  $(nameId).textContent = input.files[0] ? input.files[0].name : '';
+}
+
+function submitErection(e) {
+  e.preventDefault();
+  const client = $('fClient').value.trim(), hot = isHotrema(client);
+  const type = $('fType').value.trim(), hr = isHandrail(type);
+  const inspector = $('activeInspector').value.trim();   // logged automatically — no re-selection needed
+  if (!inspector) return toast('⚠️ Set your Active Inspector name at the top first.');
+  const dims = readDims();
+  if (!dims.length) return toast(hr ? '⚠️ Enter at least one handrail length.' : '⚠️ Enter at least one complete dimension row (H, W and L).');
+  if (!hot && !$('fReq').value.trim()) return toast('⚠️ Request # is mandatory for external clients.');
+
+  const jobNumber = $('fJob').value.trim();
+  const s = {
+    id: nextId++,
+    project: SITE,
+    jobNumber, client,
+    location: $('fLocation').value.trim(),
+    requestNumber: hot ? null : $('fReq').value.trim(),   // Hotrema rule: omitted from data structure
+    altitude: parseFloat($('fAltitude').value) || null,
+    supervisor: $('fSupervisor').value.trim(),
+    type,
+    inspector,
+    dims,
+    volume: hr ? Math.round(dims.reduce((t, d) => t + d.l, 0) * 100) / 100 : vol(dims),
+    unit: hr ? 'm' : 'm³',
+    erectedAt: Date.now(), lastInspected: Date.now(), status: 'Active',
+    photos: {
+      job: $('photoJob').files[0]?.name || null,
+      jobUrl: $('photoJob').files[0] ? URL.createObjectURL($('photoJob').files[0]) : null,
+      request: hot ? null : ($('photoReq').files[0]?.name || null),
+      requestUrl: !hot && $('photoReq').files[0] ? URL.createObjectURL($('photoReq').files[0]) : null,
+      scaftag: $('photoScaftag').files[0]?.name || null,
+      scaftagUrl: $('photoScaftag').files[0] ? URL.createObjectURL($('photoScaftag').files[0]) : null
+    },
+    history: [{ ts: Date.now(), type: 'Erected', inspector, note: `Erected & handed over by ${$('fSupervisor').value.trim()}` }]
+  };
+  scaffolds.unshift(s);
+
+  // simulate the automated WhatsApp burst (only from the "Submit & Send" button).
+  // Message order: 1) job photo · 2) scaffold info · 3) request photo (if there is one) · 4) scaftag photo
+  // Info text follows the site layout exactly (comma decimals, dash separators):
+  //   Job - 3249 / C - SES / Location - … / Length - 37,22 / R - 12701 / Supervisor - Stu / J - Railing
+  const euN = n => String(n).replace('.', ',');
+  const dimLines = s.dims.map(r => hr
+    ? `Length - ${euN(r.l)}`
+    : `Height - ${euN(r.h)}\nWidth - ${euN(r.w)}\nLength - ${euN(r.l)}`
+  ).join('\n');
+  const infoText = [
+    `Job - ${s.jobNumber}`,
+    `C - ${s.client}`,
+    `Location - ${s.location}`,
+    dimLines,
+    ...(s.requestNumber ? [`R - ${s.requestNumber}`] : []),
+    `Supervisor - ${s.supervisor}`,
+    `J - ${s.type}`,
+  ].join('\n');
+  lastWaText = infoText;
+  const sendWa = waIntent;
+  const msgs = [
+    { img: s.photos.jobUrl,
+      text: `📷 Job photo${s.photos.job ? ': ' + s.photos.job : ' — (none attached)'}` },
+    { text: infoText },
+    ...(s.requestNumber ? [{ img: s.photos.requestUrl,
+      text: `📋 Request photo — R-${s.requestNumber}${s.photos.request ? ': ' + s.photos.request : ' — (none attached)'}` }] : []),
+    { img: s.photos.scaftagUrl,
+      text: `🏷️ Scaftag photo${s.photos.scaftag ? ': ' + s.photos.scaftag : ' — (none attached)'}` }
+  ];
+  if (sendWa) {
+    const stamp = new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    $('waList').innerHTML = msgs.map(m => `
+      <div class="bg-white rounded-lg rounded-tl-none p-2 shadow text-xs whitespace-pre-line max-w-[85%]">
+        ${m.img ? `<img src="${m.img}" class="rounded-md mb-1.5 w-full max-h-44 object-cover">` : ''}
+        ${esc(m.text)}<span class="block text-right text-[10px] text-slate-400 mt-1">${stamp} ✓✓</span>
+      </div>`).join('');
+    $('waModal').classList.remove('hidden');
+  } else {
+    toast(`✅ Job ${s.jobNumber} erected & saved — WhatsApp skipped`);
+  }
+
+  e.target.reset();
+  ['photoJobName', 'photoReqName', 'photoScaftagName'].forEach(id => $(id).textContent = '');
+  onTypeChange();
+  onClientChange();
+  setMobileTab('board');
+  renderAll();
+}
+
+// ---------- Desktop: board + stats ----------
+function renderDesktop() {
+  const inProject = scaffolds;
+  const active = inProject.filter(s => s.status === 'Active');
+  $('statActive').textContent = active.length;
+  $('statDueSoon').textContent = active.filter(s => { const d = dueInfo(s).daysLeft; return d >= 0 && d <= 2; }).length;
+  $('statOverdue').textContent = active.filter(s => dueInfo(s).daysLeft < 0).length;
+  // volume stats count m³ jobs only — handrail linear metres would skew them
+  $('statVolume').textContent = active.filter(s => s.unit !== 'm').reduce((t, s) => t + s.volume, 0).toFixed(2);
+  $('statDismVolume').textContent = inProject.filter(s => s.status !== 'Active' && s.unit !== 'm').reduce((t, s) => t + s.volume, 0).toFixed(2);
+  // everything ever erected on this project = active + dismantled
+  $('statTotalVolume').textContent = inProject.filter(s => s.unit !== 'm').reduce((t, s) => t + s.volume, 0).toFixed(2);
+
+  const q = state.deskSearch.trim().toLowerCase();
+  const rows = (state.showDismantled ? inProject : active).filter(s =>
+    !q || s.jobNumber.toLowerCase().includes(q)
+      || (s.requestNumber || '').toLowerCase().includes(q)
+      || s.location.toLowerCase().includes(q)
+      || s.client.toLowerCase().includes(q)
+      || s.history.some(h => (h.requestNumber || '').toLowerCase().includes(q))   // modification request numbers
+  );
+  $('deskTableBody').innerHTML = rows.length ? rows.map(s => {
+    const activeRow = s.status === 'Active';
+    const d = dueInfo(s);
+    const modReqs = s.history.filter(h => h.requestNumber).map(h => 'R-' + esc(h.requestNumber));
+    return `
+    <tr onclick="openJobDetail(${s.id})" class="border-t border-slate-100 hover:bg-slate-50 cursor-pointer ${activeRow ? '' : 'opacity-60'}" title="Click for job details & photos">
+      <td class="p-3 font-bold">${esc(s.jobNumber)}</td>
+      <td class="p-3">${esc(s.client)}</td>
+      <td class="p-3">${s.requestNumber ? 'R-' + esc(s.requestNumber) : '<span class="text-orange-600 text-xs font-semibold">Internal</span>'}
+        ${modReqs.length ? `<span class="block text-[10px] text-slate-400">mods: ${modReqs.join(', ')}</span>` : ''}</td>
+      <td class="p-3">${esc(s.location)}</td>
+      <td class="p-3 text-slate-500">${esc(s.type)}</td>
+      <td class="p-3 text-right font-semibold">${s.volume.toFixed(2)} ${s.unit || 'm³'}</td>
+      <td class="p-3">${activeRow ? `<span class="text-[11px] font-bold px-2 py-1 rounded-full border ${d.pill}">${d.label}</span>` : '—'}</td>
+      <td class="p-3 text-xs font-semibold ${activeRow ? 'text-emerald-600' : 'text-slate-400'}">${esc(s.status)}</td>
+      <td class="p-3 text-right whitespace-nowrap">
+        <button onclick="event.stopPropagation(); openCert(${s.id})" class="px-2.5 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold" title="Handover Certificate">📄 Cert</button>
+        <button onclick="event.stopPropagation(); openPack(${s.id})" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold" title="Client Pack — print / save as PDF">📦 Pack</button>
+        <button onclick="event.stopPropagation(); openEditModal(${s.id})" class="px-2.5 py-1.5 rounded-lg bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-semibold" title="Edit measurements">📐 Edit</button>
+        <button onclick="event.stopPropagation(); openQrModal(${s.id})" class="px-2.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold" title="QR code — scan to inspect">🔳 QR</button>
+        ${activeRow ? '' : `<button onclick="event.stopPropagation(); renewJob(${s.id})" class="px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-semibold" title="Re-activate this dismantled job">♻️ Renew</button>`}
+      </td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="9" class="p-8 text-center text-slate-400">No scaffolds match for this project.</td></tr>`;
+
+  if (state.desktopTab === 'cal') renderCalendar();
+  if (state.desktopTab === 'comp') renderCompanies();
+}
+
+// ---------- Desktop: per-company volume stats ----------
+function renderCompanies() {
+  const inProject = scaffolds;
+  $('compProject').textContent = SITE;
+  const byClient = {};
+  inProject.forEach(s => {
+    const c = byClient[s.client] = byClient[s.client] || { jobs: 0, standing: 0, dism: 0, total: 0, rail: 0 };
+    c.jobs++;
+    if (s.unit === 'm') { c.rail += s.volume; return; }
+    c.total += s.volume;
+    if (s.status === 'Active') c.standing += s.volume; else c.dism += s.volume;
+  });
+  const names = Object.keys(byClient).sort((a, b) => byClient[b].total - byClient[a].total);
+  $('compTableBody').innerHTML = names.length ? names.map(n => {
+    const c = byClient[n];
+    return `
+    <tr class="border-t border-slate-100 hover:bg-slate-50">
+      <td class="p-3 font-bold">${esc(n)}${isHotrema(n) ? ' <span class="text-[10px] text-orange-600 font-semibold">internal</span>' : ''}</td>
+      <td class="p-3 text-right">${c.jobs}</td>
+      <td class="p-3 text-right font-semibold text-blue-700">${c.standing.toFixed(2)}</td>
+      <td class="p-3 text-right text-slate-500">${c.dism.toFixed(2)}</td>
+      <td class="p-3 text-right font-semibold text-emerald-700">${c.total.toFixed(2)}</td>
+      <td class="p-3 text-right text-slate-500">${c.rail ? c.rail.toFixed(2) : '—'}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="6" class="p-8 text-center text-slate-400">No scaffolds on this project yet.</td></tr>`;
+}
+
+// ---------- Desktop: calendar ----------
+function renderCalendar() {
+  const base = new Date();
+  const view = new Date(base.getFullYear(), base.getMonth() + state.calOffset, 1);
+  $('calTitle').textContent = view.toLocaleDateString('en-GB', { month: 'long', year: 'numeric' });
+
+  const active = scaffolds.filter(s => s.status === 'Active');
+  const byDay = {};
+  active.forEach(s => {
+    const d = dueInfo(s);
+    const key = new Date(d.due).toDateString();
+    (byDay[key] = byDay[key] || []).push({ s, d });
+  });
+
+  const firstDow = (view.getDay() + 6) % 7;              // Monday-start offset
+  const daysInMonth = new Date(view.getFullYear(), view.getMonth() + 1, 0).getDate();
+  const todayKey = new Date().toDateString();
+  let cells = '';
+  for (let i = 0; i < firstDow; i++) cells += `<div class="min-h-[84px] rounded-lg bg-slate-50"></div>`;
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(view.getFullYear(), view.getMonth(), day);
+    const key = date.toDateString();
+    const items = byDay[key] || [];
+    const isToday = key === todayKey;
+    cells += `
+    <div class="min-h-[84px] rounded-lg border ${isToday ? 'border-blue-500 ring-2 ring-blue-200 bg-blue-50/40' : 'border-slate-200 bg-white'} p-1.5">
+      <p class="text-[11px] font-bold ${isToday ? 'text-blue-600' : 'text-slate-400'}">${day}${isToday ? ' · today' : ''}</p>
+      <div class="space-y-1 mt-1">
+        ${items.map(({ s, d }) => {
+          const color = d.daysLeft < 0 || d.daysLeft === 0 ? 'bg-red-500' : d.daysLeft <= 2 ? 'bg-amber-400 text-amber-950' : 'bg-emerald-500';
+          return `<button onclick="openCert(${s.id})" title="${esc(s.location)} — click for certificate"
+            class="block w-full text-left text-[10px] font-bold text-white ${color} rounded px-1.5 py-0.5 truncate">Job ${esc(s.jobNumber)}</button>`;
+        }).join('')}
+      </div>
+    </div>`;
+  }
+  $('calGrid').innerHTML = cells;
+}
+
+// ---------- Client Pack (A4 portrait PDF via print) ----------
+function printSheet(orientation) {
+  $('pageStyle').textContent = `@page { size: A4 ${orientation}; margin: 8mm; }`;
+  window.print();
+}
+
+// Save a sheet straight to the PC as a real PDF file (no print dialog)
+function downloadSheetPdf(sheetId, orientation, filename) {
+  if (typeof html2pdf === 'undefined') return toast('⚠️ PDF library not loaded — check your internet connection.');
+  toast('⬇ Generating PDF…');
+  html2pdf().set({
+    margin: 6,
+    filename,
+    image: { type: 'jpeg', quality: 0.95 },
+    html2canvas: { scale: 2, useCORS: true },
+    jsPDF: { unit: 'mm', format: 'a4', orientation },
+    pagebreak: { mode: ['avoid-all', 'css'] },
+  }).from($(sheetId)).save()
+    .then(() => toast(`✅ ${filename} saved to your Downloads folder`))
+    .catch(e => toast('⚠️ PDF failed: ' + e.message));
+}
+
+function downloadCertPdf() { downloadSheetPdf('certSheet', 'landscape', `HandoverCertificate_Job${state.certJob || ''}.pdf`); }
+function downloadPackPdf() { downloadSheetPdf('packSheet', 'portrait', `ClientPack_Job${state.packJob || ''}.pdf`); }
+
+function openPack(id) {
+  const s = scaffolds.find(x => x.id === id);
+  state.packJob = s.jobNumber;
+  const d = dueInfo(s);
+  const hr = s.unit === 'm';
+  const statusPill = s.status === 'Active'
+    ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+    : 'bg-slate-200 text-slate-600 border-slate-300';
+  const f = (k, v) => `
+    <div>
+      <p class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">${k}</p>
+      <p class="text-[12.5px] font-semibold text-slate-900">${v || '—'}</p>
+    </div>`;
+
+  const dimRows = s.dims.map((r, i) => `
+    <tr class="border-b border-slate-100">
+      <td class="py-1 pr-2 font-bold text-slate-400">2.${i + 1}</td>
+      <td class="py-1 text-right">${hr ? '—' : r.h}</td>
+      <td class="py-1 text-right">${hr ? '—' : r.w}</td>
+      <td class="py-1 text-right">${r.l}</td>
+      <td class="py-1 text-right font-semibold">${(hr ? r.l : Math.round(r.h * r.w * r.l * 100) / 100).toFixed(2)} ${s.unit}</td>
+    </tr>`).join('');
+
+  const pTile = (label, name, url) => url
+    ? `<figure class="avoid-break"><img src="${url}" class="w-full h-40 object-cover rounded border border-slate-300">
+         <figcaption class="text-[9px] text-slate-500 mt-0.5 truncate">${label}${name ? ' · ' + esc(name) : ''}</figcaption></figure>`
+    : `<div class="h-40 rounded border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 text-[10px] px-1 text-center avoid-break">
+         <span class="text-xl">📷</span>${label}<span class="font-semibold truncate max-w-full">${esc(name || 'not on file')}</span></div>`;
+  const photoTiles = [
+    pTile('Job Photo', s.photos.job, s.photos.jobUrl),
+    ...(isHotrema(s.client) ? [] : [pTile('Request Photo', s.photos.request, s.photos.requestUrl)]),
+    pTile('Scaftag Photo', s.photos.scaftag, s.photos.scaftagUrl),
+    ...((s.photos.extra || []).map(p => pTile('Extra Photo', p.name, p.url))),
+  ].join('');
+
+  const histRows = s.history.map(h => `
+    <tr class="border-b border-slate-100 align-top">
+      <td class="py-1.5 pr-3 whitespace-nowrap text-slate-500">${fmtDateTime(h.ts)}</td>
+      <td class="py-1.5 pr-3 font-semibold whitespace-nowrap">${esc(h.type)}</td>
+      <td class="py-1.5 pr-3 whitespace-nowrap">${esc(h.inspector)}</td>
+      <td class="py-1.5 pr-3 whitespace-nowrap">${h.requestNumber ? 'R-' + esc(h.requestNumber) : '—'}</td>
+      <td class="py-1.5 text-slate-600">${esc(h.note || '')}${h.photos?.length ? `<span class="block text-[9px] text-slate-400">📎 ${h.photos.map(esc).join(', ')}</span>` : ''}</td>
+    </tr>`).join('');
+
+  $('packSheet').innerHTML = `
+    <div class="flex items-start justify-between border-b-4 border-blue-800 pb-3">
+      <div class="flex items-center gap-3">
+        <img src="hotrema_logo.png" class="h-9 w-auto" alt="Hotrema">
+        <div>
+          <p class="font-bold text-[16px] leading-tight text-blue-900">SCAFFOLD CLIENT PACK</p>
+          <p class="text-[10px] text-slate-500">${esc(SITE)} · Generated ${new Date().toLocaleString('en-GB')}</p>
+        </div>
+      </div>
+      <div class="text-right">
+        <p class="font-bold text-[18px]">Job ${esc(s.jobNumber)}</p>
+        <span class="inline-block text-[10px] font-bold px-2 py-0.5 rounded-full border ${statusPill}">${esc(s.status)}</span>
+      </div>
+    </div>
+
+    <h3 class="font-bold text-blue-900 text-[13px] mt-4 mb-2">1 · Scaffold Record</h3>
+    <div class="grid grid-cols-3 gap-x-6 gap-y-2.5 bg-slate-50 rounded-lg p-3 avoid-break">
+      ${f('Client / Contractor', esc(s.client) + (isHotrema(s.client) ? ' (internal build)' : ''))}
+      ${f('Request Number', s.requestNumber ? 'R-' + esc(s.requestNumber) : 'N/A')}
+      ${f('Location', esc(s.location))}
+      ${f('Scaffold Type', esc(s.type))}
+      ${f('Supervisor', esc(s.supervisor))}
+      ${f('Handover Inspector', esc(s.inspector))}
+      ${f('Altitude', s.altitude != null ? s.altitude + ' m' : '—')}
+      ${f('Erected', fmtDate(s.erectedAt))}
+      ${f('Last Inspection', fmtDate(s.lastInspected))}
+      ${f('Next Inspection Due', s.status === 'Active' ? `${fmtDate(d.due)} (${d.label})` : '—')}
+    </div>
+
+    <h3 class="font-bold text-blue-900 text-[13px] mt-4 mb-2">2 · Dimensions &amp; ${hr ? 'Length' : 'Volume'}</h3>
+    <table class="w-full text-[11px] avoid-break">
+      <thead>
+        <tr class="text-left text-[9px] uppercase tracking-wider text-slate-400 border-b-2 border-slate-300">
+          <th class="py-1 pr-2">Line</th><th class="py-1 text-right">Height (m)</th>
+          <th class="py-1 text-right">Width (m)</th><th class="py-1 text-right">Length (m)</th>
+          <th class="py-1 text-right">${hr ? 'Length' : 'Volume'}</th>
+        </tr>
+      </thead>
+      <tbody>${dimRows}</tbody>
+      <tfoot><tr class="border-t-2 border-slate-800 font-bold"><td colspan="4" class="py-1.5">TOTAL</td><td class="py-1.5 text-right">${s.volume.toFixed(2)} ${s.unit}</td></tr></tfoot>
+    </table>
+    <p class="text-[10px] text-slate-500 mt-1">16-point compliance checklist: all items passed at handover.</p>
+
+    <h3 class="font-bold text-blue-900 text-[13px] mt-4 mb-2">3 · Photos</h3>
+    <div class="grid grid-cols-3 gap-2">${photoTiles}</div>
+
+    <h3 class="font-bold text-blue-900 text-[13px] mt-4 mb-2">4 · Inspection &amp; Modification Log</h3>
+    <table class="w-full text-[10.5px]">
+      <thead>
+        <tr class="text-left text-[9px] uppercase tracking-wider text-slate-400 border-b-2 border-slate-300">
+          <th class="py-1 pr-3">Date</th><th class="py-1 pr-3">Action</th>
+          <th class="py-1 pr-3">Inspector</th><th class="py-1 pr-3">Request</th><th class="py-1">Notes</th>
+        </tr>
+      </thead>
+      <tbody>${histRows}</tbody>
+    </table>
+
+    <div class="flex justify-between items-center border-t border-slate-300 mt-5 pt-2 text-[9px] text-slate-400">
+      <span>Hotrema Tracker — scaffold register extract</span>
+      <span>Weekly statutory inspections at 7-day intervals per WAHR 2005 / TG30:21</span>
+    </div>`;
+  $('packModal').classList.remove('hidden');
+}
+
+// ---------- Handover certificate (replica of the Hotrema Excel A4 landscape sheet) ----------
+function openCert(id) {
+  const s = scaffolds.find(x => x.id === id);
+  state.certJob = s.jobNumber;
+  // The Excel sheet uses European comma decimals: 279,53
+  const eu = n => (Math.round((n || 0) * 100) / 100).toFixed(2).replace('.', ',');
+  const d8 = ts => { const d = new Date(ts); return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, '0')}.${String(d.getDate()).padStart(2, '0')}`; };
+  const CB = on => `<span class="cb">${on ? '☑' : '☐'}</span>`;
+  const hot = isHotrema(s.client);
+
+  const hrJob = s.unit === 'm';   // handrail job: length only, linear metres
+  const dimLines = [0, 1, 2, 3].map(i => {
+    const r = s.dims[i] || { h: 0, w: 0, l: 0 };
+    const rowVol = hrJob ? r.l : r.h * r.w * r.l;
+    return `
+    <div class="flex items-baseline gap-1 py-[3px] whitespace-nowrap text-[11px]">
+      <span class="w-7 shrink-0">2.${i + 1}</span>
+      <span>Scaffolding height</span><span class="val w-12 font-semibold">${hrJob ? '' : eu(r.h)}</span><span>m,</span>
+      <span class="pl-1">width</span><span class="val w-12 font-semibold">${hrJob ? '' : eu(r.w)}</span><span>m,</span>
+      <span class="pl-1">length</span><span class="val w-12 font-semibold">${eu(r.l)}</span><span>m,</span>
+      <span class="ml-auto pl-2">${hrJob ? 'Handrail length' : 'Scaffolding volume'}</span><span class="val w-14 font-semibold">${rowVol ? eu(rowVol) : ''}</span><span>${hrJob ? 'm' : 'm³'}</span>
+    </div>`;
+  }).join('');
+
+  const checkRows = CHECKLIST.map((item, i) => `
+    <tr>
+      <td class="py-[1.5px]"><b>${i + 1}.</b> ${item.text}</td>
+      <td class="text-center">${CB(!item.na)}</td>
+      <td class="text-center">${CB(false)}</td>
+      <td class="text-center">${CB(!!item.na)}</td>
+    </tr>`).join('');
+
+  const dismEntry = s.history.slice().reverse().find(h => h.type === 'Dismantled');
+
+  const mainPhoto = s.photos.jobUrl
+    ? `<img src="${s.photos.jobUrl}" class="w-full h-72 object-cover border border-slate-400">`
+    : `<div class="w-full h-72 border border-slate-400 bg-slate-50 flex flex-col items-center justify-center text-slate-400">
+         <span class="text-4xl">📷</span><span class="text-xs mt-2">Job photo</span>
+         <span class="text-[10px]">${esc(s.photos.job || 'no photo on file')}</span>
+       </div>`;
+  // additional pictures (request, scaftag, extras from WhatsApp import) as a thumbnail strip
+  const thumbs = [
+    ...(s.photos.requestUrl ? [{ url: s.photos.requestUrl, label: 'Request' }] : []),
+    ...(s.photos.scaftagUrl ? [{ url: s.photos.scaftagUrl, label: 'Scaftag' }] : []),
+    ...((s.photos.extra || []).filter(p => p.url).map(p => ({ url: p.url, label: 'Photo' }))),
+  ].slice(0, 4);
+  const photoBox = mainPhoto + (thumbs.length ? `
+    <div class="grid grid-cols-4 gap-1 mt-1">
+      ${thumbs.map(t => `<figure><img src="${t.url}" class="w-full h-16 object-cover border border-slate-400"><figcaption class="cert-caption text-center">${t.label}</figcaption></figure>`).join('')}
+    </div>` : '');
+
+  const sigLine = (label, value) => `
+    <div class="mt-2">${label} <span class="val font-semibold" style="min-width:200px">${value || '&nbsp;'}</span></div>
+    <div class="cert-caption text-right pr-2">Company name, function, name, surname, signature, date</div>`;
+
+  $('certSheet').innerHTML = `
+  <div class="grid grid-cols-[1.6fr_1fr] gap-5">
+    <!-- ============ LEFT: form + checklist ============ -->
+    <div>
+      <div class="grid grid-cols-[140px_70px_1fr_auto] items-baseline gap-1 border-b border-slate-300 pb-1">
+        <span class="font-semibold">Scaffolding number:</span>
+        <span class="val font-bold">${esc(s.jobNumber)}</span>
+        <span class="pl-3">Project /Contract nr: <b>76.2011 UAB Hotrema</b></span>
+        <span class="font-semibold">${esc(s.project)}</span>
+      </div>
+      <div class="grid grid-cols-[140px_1fr] items-center mt-1">
+        <img class="hotrema-logo-img" src="data:image/png;base64,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" alt="Hotrema" style="height:32px; width:auto;">
+        <div class="text-center font-bold text-[16px] tracking-wide">SCAFFOLDING HANDING-OVER CERTIFICATE</div>
+      </div>
+      <div class="grid grid-cols-[140px_110px] items-baseline">
+        <span class="font-bold">Request Numbers</span>
+        <span class="val font-semibold">${s.requestNumber ? esc(s.requestNumber) : '&nbsp;'}</span>
+      </div>
+      <div class="grid grid-cols-[140px_110px] items-baseline mt-0.5">
+        <span class="font-bold">Altitude</span>
+        <span class="val">${s.altitude ?? '&nbsp;'}</span>
+      </div>
+      <div class="font-bold mt-1">Scaffolding assembly place:</div>
+      <div class="grid grid-cols-[28px_1fr_60px] items-end mt-0.5">
+        <span>1.</span>
+        <div class="text-center">
+          <div class="font-bold border-b border-slate-800">${esc(s.location)}</div>
+          <div class="cert-caption">(Location/Position/Unit No.)</div>
+        </div>
+        <span></span>
+      </div>
+
+      <div class="mt-2">${dimLines}</div>
+      <div class="flex items-baseline justify-end gap-1 font-semibold mt-0.5">
+        <span>${hrJob ? 'Handrail length total' : 'Scaffolding volume total'}</span><span class="val w-16 font-bold">${eu(s.volume)}</span><span>${hrJob ? 'm' : 'm³'}</span>
+      </div>
+
+      <div class="mt-2"><b>3.</b>&nbsp; Scaffolding according following standards:</div>
+      <table class="w-full text-[11.5px] leading-tight mt-0.5">
+        <tr class="font-semibold"><td></td><td class="text-center w-11">Yes</td><td class="text-center w-11">No</td><td class="text-center w-11">N/A</td></tr>
+        ${checkRows}
+      </table>
+
+      <div class="grid grid-cols-[110px_150px_1fr] gap-3 mt-4 items-end">
+        <span>Other contractor:</span>
+        <span class="val font-bold">${hot ? '&nbsp;' : esc(s.client.toUpperCase())}</span>
+        <div>
+          <div>Scaffolding accepted: <span class="val" style="min-width:170px">&nbsp;</span></div>
+          <div class="cert-caption text-center">Company name, function, name, surname, signature</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============ RIGHT: photo + signatures ============ -->
+    <div>
+      ${photoBox}
+      <div class="font-bold text-[13px] mt-3">Assembled</div>
+      ${sigLine('Scaffolding delivered:', `UAB Hotrema, ${d8(s.erectedAt)}`)}
+      ${sigLine('Scaffolding accepted:', '')}
+      <div class="font-bold text-[13px] mt-4">Dismantled</div>
+      ${sigLine('Scaffolding delivered:', dismEntry ? `UAB Hotrema, ${d8(dismEntry.ts)}` : '')}
+      ${sigLine('Scaffolding accepted:', '')}
+    </div>
+  </div>`;
+  $('certModal').classList.remove('hidden');
+}
+
+// ---------- Office: edit measurements (pending on-site confirmation) ----------
+function openEditModal(id) {
+  const s = scaffolds.find(x => x.id === id);
+  state.editTargetId = id;
+  const hr = s.unit === 'm';
+  $('editJobLabel').textContent = `Job ${s.jobNumber} — ${s.location} · current: ${s.volume.toFixed(2)} ${s.unit}`;
+  $('editHint').textContent = hr
+    ? 'Handrail job: enter only the length (m) of each run.'
+    : 'Each row = H × W × L (m), lines 2.1 – 2.4 as per handover certificate.';
+  const inp = (p, i, v, dis) =>
+    `<input id="e${p}${i}" type="number" step="0.01" min="0" inputmode="decimal" value="${v || ''}" ${dis ? 'disabled' : ''}
+       placeholder="${p.toUpperCase()}" class="w-full min-w-0 px-1 py-2 rounded-lg border border-slate-300 text-sm text-center ${dis ? 'opacity-40' : ''}" oninput="recalcEditVolume()">`;
+  $('editRows').innerHTML = [0, 1, 2, 3].map(i => {
+    const r = s.dims[i] || { h: '', w: '', l: '' };
+    return `
+    <div class="grid grid-cols-[26px_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)] gap-1 items-center">
+      <span class="text-[11px] font-bold text-slate-400">2.${i + 1}</span>
+      ${inp('h', i, hr ? '' : r.h, hr)}${inp('w', i, hr ? '' : r.w, hr)}${inp('l', i, r.l)}
+    </div>`;
+  }).join('');
+  $('editVolUnit').textContent = s.unit;
+  recalcEditVolume();
+  $('editModal').classList.remove('hidden');
+}
+
+function recalcEditVolume() {
+  const s = scaffolds.find(x => x.id === state.editTargetId);
+  if (!s) return;
+  const hr = s.unit === 'm';
+  let total = 0;
+  for (let i = 0; i < 4; i++) {
+    const h = parseFloat($('eh' + i).value) || 0, w = parseFloat($('ew' + i).value) || 0, l = parseFloat($('el' + i).value) || 0;
+    total += hr ? l : h * w * l;
+  }
+  $('editVolTotal').textContent = (Math.round(total * 100) / 100).toFixed(2);
+}
+
+function saveEdit() {
+  const s = scaffolds.find(x => x.id === state.editTargetId);
+  const hr = s.unit === 'm';
+  const dims = [];
+  for (let i = 0; i < 4; i++) {
+    const h = parseFloat($('eh' + i).value), w = parseFloat($('ew' + i).value), l = parseFloat($('el' + i).value);
+    if (hr) { if (l > 0) dims.push({ h: 0, w: 0, l }); }
+    else if (h > 0 && w > 0 && l > 0) dims.push({ h, w, l });
+  }
+  if (!dims.length) return toast(hr ? '⚠️ Enter at least one handrail length.' : '⚠️ Enter at least one complete row (H, W and L).');
+  const newVol = hr ? Math.round(dims.reduce((t, d) => t + d.l, 0) * 100) / 100 : vol(dims);
+  if (!confirm(`Apply new measurements to Job ${s.jobNumber}?\n\n${s.volume.toFixed(2)} ${s.unit}  →  ${newVol.toFixed(2)} ${s.unit}`)) return;
+  const oldVol = s.volume;
+  s.dims = dims;
+  s.volume = newVol;
+  s.history.push({ ts: Date.now(), type: 'Measurements Edited', inspector: currentUser || 'Office',
+    note: `Volume ${oldVol.toFixed(2)} → ${newVol.toFixed(2)} ${s.unit}` });
+  closeModal('editModal');
+  renderAll();
+  toast(`📐 Job ${s.jobNumber}: measurements updated`);
+}
+
+// ---------- Office: renew a dismantled job ----------
+function renewJob(id) {
+  const s = scaffolds.find(x => x.id === id);
+  if (!confirm(`Renew dismantled Job ${s.jobNumber} — ${s.location}?\n\nIt returns to the active register with a fresh 7-day clock.`)) return;
+  s.status = 'Active';
+  s.lastInspected = Date.now();
+  s.history.push({ ts: Date.now(), type: 'Renewed', inspector: currentUser || 'Office', note: 'Job renewed from office desktop' });
+  renderAll();
+  toast(`♻️ Job ${s.jobNumber} renewed — back on the active register`);
+}
+
+// ---------- Office: job detail popup ----------
+function openJobDetail(id) {
+  const s = scaffolds.find(x => x.id === id);
+  state.detailId = id;
+  const d = dueInfo(s);
+  const hr = s.unit === 'm';
+  $('jobModalTitle').textContent = `Job ${s.jobNumber} — ${s.location}`;
+  $('jobModalSub').textContent = `${s.project} · ${s.client}${s.requestNumber ? ' · R-' + s.requestNumber : ' · Internal Build'} · ${s.status}`;
+
+  const photoTile = (label, name, url) => url
+    ? `<figure><img src="${url}" class="w-full h-36 object-cover rounded-lg border border-slate-200">
+         <figcaption class="text-[11px] text-slate-500 mt-1 truncate">${label}${name ? ' · ' + esc(name) : ''}</figcaption></figure>`
+    : `<div class="h-36 rounded-lg border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400 text-[11px] px-1 text-center">
+         <span class="text-2xl">📷</span>${label}<span class="font-semibold truncate max-w-full">${esc(name || 'no photo on file')}</span></div>`;
+
+  const info = (k, v) => `<div><p class="text-[10px] font-semibold text-slate-400 uppercase">${k}</p><p class="text-sm font-semibold text-slate-800">${v}</p></div>`;
+
+  $('jobModalBody').innerHTML = `
+    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 bg-slate-50 rounded-xl p-3">
+      ${info('Type', esc(s.type))}
+      ${info('Supervisor', esc(s.supervisor))}
+      ${info('Handover Inspector', esc(s.inspector))}
+      ${info(hr ? 'Length' : 'Volume', `${s.volume.toFixed(2)} ${s.unit || 'm³'}`)}
+      ${info('Altitude', s.altitude != null ? s.altitude + ' m' : '—')}
+      ${info('Erected', fmtDate(s.erectedAt))}
+      ${info('Last Inspection', fmtDate(s.lastInspected))}
+      ${info('Next Due', s.status === 'Active' ? `${fmtDate(d.due)} (${d.label})` : '—')}
+      ${info('Dimensions', s.dims.map((r, i) => hr ? `2.${i + 1}: ${r.l} m` : `2.${i + 1}: ${r.h}×${r.w}×${r.l}`).join('<br>'))}
+    </div>
+
+    <h4 class="font-bold text-sm text-slate-900 mt-4 mb-2">Photos</h4>
+    <div class="grid grid-cols-3 gap-2">
+      ${photoTile('Job Photo', s.photos.job, s.photos.jobUrl)}
+      ${isHotrema(s.client) ? '' : photoTile('Request Photo', s.photos.request, s.photos.requestUrl)}
+      ${photoTile('Scaftag Photo', s.photos.scaftag, s.photos.scaftagUrl)}
+      ${(s.photos.extra || []).map(p => photoTile('Extra Photo', p.name, p.url)).join('')}
+    </div>
+
+    <h4 class="font-bold text-sm text-slate-900 mt-4 mb-2">Description &amp; History</h4>
+    <div class="bg-white border border-slate-200 rounded-lg p-2 max-h-48 overflow-y-auto">
+      ${s.history.slice().reverse().map(h => `
+        <div class="text-xs text-slate-600 py-1.5 border-b border-slate-100 last:border-0">
+          <span class="font-semibold">${fmtDateTime(h.ts)}</span> — <span class="font-semibold">${esc(h.type)}</span> by ${esc(h.inspector)}
+          ${h.requestNumber ? ' · <span class="font-semibold text-blue-700">R-' + esc(h.requestNumber) + '</span>' : ''}
+          ${h.note ? `<span class="block text-slate-500">${esc(h.note)}</span>` : ''}
+          ${h.photos?.length ? `<span class="block text-[10px] text-slate-400">📎 ${h.photos.map(esc).join(', ')}</span>` : ''}
+        </div>`).join('')}
+    </div>`;
+  $('jobModalPhoto').value = '';
+  $('jobModal').classList.remove('hidden');
+}
+
+function jobDetailPhotoPicked(input) {
+  const s = scaffolds.find(x => x.id === state.detailId);
+  const f = input.files[0];
+  if (!s || !f) return;
+  s.photos.job = f.name;
+  s.photos.jobUrl = URL.createObjectURL(f);
+  s.history.push({ ts: Date.now(), type: 'Photo Added', inspector: currentUser || 'Office', note: `Job photo "${f.name}" added from office` });
+  openJobDetail(s.id);
+  renderAll();
+  toast('📷 Photo saved — it now appears on the handover certificate');
+}
+
+// ---------- Office: QR codes ----------
+function openQrModal(id) {
+  const s = scaffolds.find(x => x.id === id);
+  if (typeof qrcode === 'undefined') return toast('⚠️ QR library not loaded — check your internet connection.');
+  const base = location.href.split(/[?#]/)[0];
+  const link = `${base}?inspect=${encodeURIComponent(s.jobNumber)}`;
+  const qr = qrcode(0, 'M');
+  qr.addData(link);
+  qr.make();
+  $('qrBox').innerHTML = qr.createSvgTag({ cellSize: 5, margin: 3 });
+  $('qrJobLabel').textContent = `Job ${s.jobNumber} — ${s.location}`;
+  $('qrLink').textContent = link;
+  const dl = $('qrDownload');
+  dl.href = qr.createDataURL(8, 8);
+  dl.download = `QR_Job${s.jobNumber}.gif`;
+  $('qrModal').classList.remove('hidden');
+}
+
+// If opened from a scanned QR code, jump straight to that scaffold's inspection card
+function handleQrScan() {
+  const jobNum = new URLSearchParams(location.search).get('inspect');
+  if (!jobNum) return;
+  const s = scaffolds.find(x => x.jobNumber === jobNum && x.status === 'Active');
+  if (!s) return toast(`⚠️ QR scan: no active scaffold with Job # ${jobNum}`);
+  setView('mobile');
+  setMobileTab('board');
+  state.search = jobNum;
+  $('searchInput').value = jobNum;
+  state.openCardId = s.id;
+  renderMobileBoard();
+  toast(`🔳 QR scan: Job ${jobNum} ready for inspection`);
+}
+
+// ---------- WhatsApp chat import (same rules as whatsapp_parser.py, plus pictures) ----------
+const WA_IOS     = /^\[(\d{1,2}[./]\d{1,2}[./]\d{2,4}),?\s+(\d{1,2}:\d{2}(?::\d{2})?)(?:\s*[APap]\.?[Mm]\.?)?\]\s*([^:]+?):\s?(.*)$/;
+const WA_ANDROID = /^(\d{1,2}[./]\d{1,2}[./]\d{2,4}),?\s+(\d{1,2}:\d{2})(?:\s*[APap]\.?[Mm]\.?)?\s*-\s*([^:]+?):\s?(.*)$/;
+const WA_FIELDS = {
+  job:        /\bjob\s*(?:number|no\.?|nr\.?|#)?\s*[:\-]?\s*#?\s*([A-Za-z]?\d[\w/\-]*)/i,
+  client:     /\bC\s?-\s*([^\n,;|]+)/,
+  request:    /\bR\s?-\s*#?\s*([A-Za-z0-9/\-]+)/,
+  type:       /\bJ\s?-\s*([^\n,;|]+)/,
+  location:   /\blocation\s*[:\-]?\s*([^\n]+)/i,
+  height:     /\bheights?\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i,
+  width:      /\b(?:wide|width)\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i,
+  length:     /\blength\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i,
+  supervisor: /\bsupervisor\s*[:\-]?\s*([^\n]+)/i,
+};
+const WA_DISMANTLE = /\b(dismantl\w*|demontage)\b/i;
+const WA_EXPIRY_DAYS = 30;
+const waNum = raw => parseFloat(String(raw).trim().replace(/\s/g, '').replace(',', '.'));
+
+function waTs(dateRaw, timeRaw) {
+  const p = dateRaw.split(/[./]/).map(Number);
+  if (p.length !== 3) return null;
+  let [d, mo, y] = p;
+  if (y < 100) y += 2000;
+  if (d > 31) [d, y] = [y > 2000 ? d : y, d];      // defensive; dd/mm assumed (en-GB exports)
+  const t = timeRaw.split(':').map(Number);
+  const dt = new Date(y, mo - 1, d, t[0] || 0, t[1] || 0, t[2] || 0);
+  return isNaN(dt) ? null : dt.getTime();
+}
+
+function parseWaChat(text) {
+  // 1 · split raw export into messages (continuation lines merge into the previous one)
+  const msgs = [];
+  text.split(/\r?\n/).forEach(line => {
+    line = line.replace(/[‎‏]/g, '');
+    const m = line.match(WA_IOS) || line.match(WA_ANDROID);
+    if (m) {
+      const ts = waTs(m[1], m[2]);
+      if (ts) msgs.push({ ts, sender: m[3].trim(), text: m[4] });
+    } else if (msgs.length && line.trim()) {
+      msgs[msgs.length - 1].text += '\n' + line;
+    }
+  });
+
+  // 2 · per-message field + attachment extraction
+  msgs.forEach(g => {
+    g.fields = {};
+    for (const [k, re] of Object.entries(WA_FIELDS)) {
+      const m = g.text.match(re);
+      if (m) g.fields[k] = m[1].trim().replace(/\.+$/, '');
+    }
+    g.att = [];
+    let am;
+    const iosAtt = /<attached:\s*([^>]+)>/g;
+    while ((am = iosAtt.exec(g.text))) g.att.push(am[1].trim());
+    const andAtt = /([\w()\-. ]+\.(?:jpe?g|png|webp|gif))\s*\(file attached\)/gi;
+    while ((am = andAtt.exec(g.text))) g.att.push(am[1].trim());
+    g.dism = WA_DISMANTLE.test(g.text);
+  });
+
+  // 3 · build records keyed by job number (or request as fallback)
+  const records = {};
+  const findRec = f => {
+    if (f.job && records[f.job]) return records[f.job];
+    if (f.request) for (const r of Object.values(records))
+      if (r.request && r.request.toLowerCase() === f.request.toLowerCase()) return r;
+    return null;
+  };
+  msgs.forEach(g => {
+    const f = g.fields;
+    if (!Object.keys(f).length) return;
+    let rec = findRec(f);
+    if (!rec) {
+      const key = f.job || (f.request ? 'R-' + f.request : null);
+      if (!key) return;
+      rec = records[key] = {
+        job: f.job || '', client: '', location: '', request: '', supervisor: '', type: '',
+        height: null, width: null, length: null,
+        firstSeen: g.ts, lastActivity: g.ts, sender: g.sender, status: 'Active', photoNames: [],
+      };
+    }
+    ['client', 'location', 'supervisor', 'type', 'request'].forEach(k => { if (f[k]) rec[k] = f[k]; });
+    ['height', 'width', 'length'].forEach(k => { if (f[k] && !isNaN(waNum(f[k]))) rec[k] = waNum(f[k]); });
+    rec.lastActivity = Math.max(rec.lastActivity, g.ts);
+    rec.firstSeen = Math.min(rec.firstSeen, g.ts);
+    if (g.dism) rec.status = 'Dismantled';
+    g.rec = rec;
+  });
+
+  // 4 · attach pictures: an attachment belongs to the nearest job message
+  //     from the same sender within 10 minutes (WhatsApp bursts), any sender as fallback
+  const anchored = msgs.filter(g => g.rec);
+  msgs.forEach(g => {
+    if (!g.att.length) return;
+    let rec = g.rec;
+    if (!rec) {
+      const near = who => anchored
+        .filter(a => (!who || a.sender === g.sender) && Math.abs(a.ts - g.ts) <= 10 * 60000)
+        .sort((a, b) => Math.abs(a.ts - g.ts) - Math.abs(b.ts - g.ts))[0];
+      rec = (near(true) || near(false))?.rec;
+    }
+    if (rec) rec.photoNames.push(...g.att);
+  });
+
+  // 5 · Hotrema rule + 30-day expiry rule
+  const newest = msgs.length ? Math.max(...msgs.map(g => g.ts)) : Date.now();
+  Object.values(records).forEach(r => {
+    if (isHotrema(r.client)) r.request = '';
+    if (r.status === 'Active' && (newest - r.lastActivity) / DAY > WA_EXPIRY_DAYS) r.status = 'Dismantled';
+  });
+  return { records: Object.values(records), messageCount: msgs.length };
+}
+
+function openWaImport() {
+  $('waChatFile').value = ''; $('waChatFileName').textContent = '';
+  $('waMediaFiles').value = ''; $('waMediaFilesName').textContent = '';
+  $('waImportResult').classList.add('hidden');
+  $('waImportProject').textContent = SITE;
+  $('waImportModal').classList.remove('hidden');
+}
+
+async function runWaImport() {
+  const chatFile = $('waChatFile').files[0];
+  if (!chatFile) return toast('⚠️ Pick the chat export first (.zip or _chat.txt).');
+  $('waImportBtn').disabled = true;
+  try {
+    let chatText = null;
+    const media = {};   // base filename (lowercase) -> object URL
+
+    if (/\.zip$/i.test(chatFile.name)) {
+      if (typeof JSZip === 'undefined') return toast('⚠️ ZIP library not loaded — check your internet connection.');
+      const zip = await JSZip.loadAsync(chatFile);
+      for (const entry of Object.values(zip.files)) {
+        if (entry.dir) continue;
+        const base = entry.name.split('/').pop();
+        if (/\.txt$/i.test(base) && chatText === null) chatText = await entry.async('string');
+        else if (/\.(jpe?g|png|webp|gif)$/i.test(base)) media[base.toLowerCase()] = URL.createObjectURL(await entry.async('blob'));
+      }
+    } else {
+      chatText = await chatFile.text();
+    }
+    for (const f of $('waMediaFiles').files) media[f.name.toLowerCase()] = URL.createObjectURL(f);
+    if (!chatText) return toast('⚠️ No chat .txt found in that file.');
+
+    const { records, messageCount } = parseWaChat(chatText);
+    if (!records.length) return toast('⚠️ No scaffold records found in that chat.');
+
+    let added = 0, updated = 0, photosMatched = 0, photosMissing = 0;
+    records.forEach(r => {
+      // resolve this record's pictures against the uploaded files
+      const pics = [];
+      r.photoNames.forEach(n => {
+        const url = media[n.toLowerCase()];
+        if (url) { pics.push({ name: n, url }); photosMatched++; }
+        else photosMissing++;
+      });
+
+      let s = scaffolds.find(x => x.jobNumber === r.job && r.job);
+      if (!s) {
+        const hr = isHandrail(r.type);
+        const dims = hr
+          ? (r.length ? [{ h: 0, w: 0, l: r.length }] : [])
+          : (r.height && r.width && r.length ? [{ h: r.height, w: r.width, l: r.length }] : []);
+        s = {
+          id: nextId++, project: SITE,
+          jobNumber: r.job || ('R-' + r.request), client: r.client || 'Unknown',
+          location: r.location || '—',
+          requestNumber: isHotrema(r.client) ? null : (r.request || null),
+          altitude: null, supervisor: r.supervisor || '—', type: r.type || '—',
+          inspector: r.sender, dims,
+          volume: hr ? Math.round(dims.reduce((t, d) => t + d.l, 0) * 100) / 100 : vol(dims),
+          unit: hr ? 'm' : 'm³',
+          erectedAt: r.firstSeen, lastInspected: r.lastActivity, status: r.status,
+          photos: { job: null, request: null, scaftag: null },
+          history: [{ ts: r.firstSeen, type: 'Erected', inspector: r.sender, note: 'Imported from WhatsApp chat' }],
+        };
+        if (r.status !== 'Active') s.history.push({ ts: r.lastActivity, type: 'Dismantled', inspector: r.sender, note: 'Status from WhatsApp chat' });
+        scaffolds.unshift(s);
+        added++;
+      } else {
+        s.lastInspected = Math.max(s.lastInspected, r.lastActivity);
+        if (r.status !== 'Active' && s.status === 'Active') {
+          s.status = 'Dismantled';
+          s.history.push({ ts: r.lastActivity, type: 'Dismantled', inspector: r.sender, note: 'Status from WhatsApp import' });
+        }
+        updated++;
+      }
+
+      // picture order matches the site burst: job photo, request photo, scaftag photo, extras
+      const hot = isHotrema(s.client);
+      const slots = hot ? ['job', 'scaftag'] : ['job', 'request', 'scaftag'];
+      const extras = [];
+      pics.forEach(p => {
+        const free = slots.find(k => !s.photos[k + 'Url']);
+        if (free) { s.photos[free] = p.name; s.photos[free + 'Url'] = p.url; slots.splice(slots.indexOf(free), 1); }
+        else extras.push(p);
+      });
+      if (extras.length) {
+        s.photos.extra = (s.photos.extra || []).concat(extras);
+        s.history.push({ ts: r.lastActivity, type: 'Photo Added', inspector: r.sender, note: `${extras.length} extra picture(s) from WhatsApp`, photos: extras.map(p => p.name) });
+      }
+    });
+
+    renderAll();
+    const res = $('waImportResult');
+    res.textContent = `✅ Parsed ${messageCount} messages.\n` +
+      `🏗️ ${added} scaffold(s) added, ${updated} updated.\n` +
+      `🖼️ ${photosMatched} picture(s) attached to jobs` +
+      (photosMissing ? `\n⚠️ ${photosMissing} picture(s) named in the chat were not in the upload — add them via the pictures box and import again.` : '');
+    res.classList.remove('hidden');
+    toast(`📥 WhatsApp import done — ${added} added, ${updated} updated, ${photosMatched} pictures`);
+  } finally {
+    $('waImportBtn').disabled = false;
+  }
+}
+
+// ---------- Job number suggestion ----------
+function suggestJobNumber() {
+  const nums = scaffolds.map(s => parseInt(s.jobNumber, 10)).filter(n => !isNaN(n));
+  return nums.length ? String(Math.max(...nums) + 1) : '';
+}
+
+function applyJobSuggestion() {
+  const f = $('fJob');
+  // only overwrite if the field is empty or still holds a previous untouched suggestion
+  if (!f.value.trim() || f.value === f.dataset.suggested) {
+    const n = suggestJobNumber();
+    f.value = n;
+    f.dataset.suggested = n;
+  }
+}
+
+// ---------- Misc ----------
+function closeModal(id) { $(id).classList.add('hidden'); }
+
+let toastTimer;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add('hidden'), 3200);
+}
+
+function fillSelect(id, options, placeholder) {
+  $(id).innerHTML = (placeholder ? `<option value="" disabled selected>${placeholder}</option>` : '') +
+    options.map(o => `<option>${esc(o)}</option>`).join('');
+}
+
+function fillDatalist(id, options) {
+  $(id).innerHTML = options.map(o => `<option value="${esc(o)}">`).join('');
+}
+
+function syncInspectorLabel() {
+  $('formInspectorLabel').textContent = $('activeInspector').value.trim();
+}
+
+// Known inspectors + any custom names saved on this device
+const allInspectors = () => {
+  const extras = JSON.parse(localStorage.getItem('scafftrack.extraInspectors') || '[]');
+  return [...INSPECTORS, ...extras];
+};
+
+function saveActiveInspector() {
+  const name = $('activeInspector').value.trim();
+  if (!name) return;
+  localStorage.setItem('scafftrack.activeInspector', name);
+  if (!allInspectors().some(i => i.toLowerCase() === name.toLowerCase())) {
+    const extras = JSON.parse(localStorage.getItem('scafftrack.extraInspectors') || '[]');
+    extras.push(name);
+    localStorage.setItem('scafftrack.extraInspectors', JSON.stringify(extras));
+    fillDatalist('inspectorList', allInspectors());
+  }
+  toast(`👷 Active inspector saved: ${name}`);
+}
+
+function renderAll() {
+  renderMobileBoard();
+  renderDesktop();
+  persist();   // every change is saved on this device
+}
+
+// ---------- Boot ----------
+fillDatalist('inspectorList', allInspectors());
+fillDatalist('clientList', CLIENTS);
+fillDatalist('supervisorList', SUPERVISORS);
+fillDatalist('typeList', TYPES);
+buildDimRows();
+$('activeInspector').value = localStorage.getItem('scafftrack.activeInspector') || '';
+syncInspectorLabel();
+setView('mobile');
+setMobileTab('board');
+setDesktopTab('board');
+applyJobSuggestion();
+
+// login gate — remembered on this device
+const storedUser = localStorage.getItem('scafftrack.user');
+if (storedUser) applyLogin(storedUser);
+else $('loginOverlay').classList.remove('hidden');
+
+handleQrScan();
+</script>
+</body>
+</html>

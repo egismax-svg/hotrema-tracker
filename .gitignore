@@ -1,0 +1,5 @@
+*.jpg
+*.png
+!hotrema_logo.png
+*.csv
+sample_chat.txt
