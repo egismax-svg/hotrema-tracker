@@ -51,6 +51,7 @@ FIELD_PATTERNS = {
     "request":    re.compile(r"\bR\s?-\s*#?\s*([A-Za-z0-9/\-]+)"),
     "type":       re.compile(r"\bJ\s?-\s*([^\n,;|]+)"),
     "location":   re.compile(r"\blocation\s*[:\-]?\s*([^\n]+)", re.I),
+    "altitude":   re.compile(r"\baltitude\s*[:\-]?\s*(\d+(?:[.,]\d+)?)", re.I),
     "height":     re.compile(r"\bheights?\s*[:\-]?\s*(\d+(?:[.,]\d+)?)", re.I),
     "width":      re.compile(r"\b(?:wide|width)\s*[:\-]?\s*(\d+(?:[.,]\d+)?)", re.I),
     "length":     re.compile(r"\blength\s*[:\-]?\s*(\d+(?:[.,]\d+)?)", re.I),
@@ -140,7 +141,7 @@ def build_records(messages: list[dict]) -> list[dict]:
                 "job": fields.get("job", ""),
                 "client": "", "location": "", "request": "",
                 "supervisor": "", "type": "",
-                "height": None, "width": None, "length": None,
+                "height": None, "width": None, "length": None, "altitude": None,
                 "first_seen": msg["date"], "last_activity": msg["date"],
                 "messages": 0, "status": "Active",
             }
@@ -150,7 +151,7 @@ def build_records(messages: list[dict]) -> list[dict]:
         for k in ("client", "location", "supervisor", "type", "request"):
             if fields.get(k):
                 rec[k] = fields[k]
-        for k in ("height", "width", "length"):
+        for k in ("height", "width", "length", "altitude"):
             if fields.get(k):
                 val = to_float(fields[k])
                 if val is not None:
@@ -165,9 +166,16 @@ def build_records(messages: list[dict]) -> list[dict]:
             rec["status"] = "Dismantled"
 
     # --- Hotrema rule: internal builds carry no request number ---
+    # --- altitude may be written inline as "Location - X (24m)" ---
+    alt_in_loc = re.compile(r"^(.*?)\s*\((\d+(?:[.,]\d+)?)\s*m\)$", re.I)
     for rec in records.values():
         if is_hotrema(rec["client"]):
             rec["request"] = ""
+        m = alt_in_loc.match(rec["location"])
+        if m:
+            rec["location"] = m.group(1).strip()
+            if rec["altitude"] is None:
+                rec["altitude"] = to_float(m.group(2))
 
     # --- 30-day expiry rule (relative to the newest message in the chat) ---
     if messages:
@@ -188,7 +196,7 @@ def volume(rec: dict) -> str:
 
 def write_csv(records: list[dict], out_path: Path) -> None:
     header = [
-        "Job Number", "Client", "Location", "Height (m)", "Width (m)",
+        "Job Number", "Client", "Location", "Altitude (m)", "Height (m)", "Width (m)",
         "Length (m)", "Volume (m3)", "Request Number", "Supervisor",
         "Scaffold Type", "Status", "First Seen", "Last Activity", "Messages",
     ]
@@ -199,6 +207,7 @@ def write_csv(records: list[dict], out_path: Path) -> None:
         for rec in sorted(records, key=lambda r: (r["status"], r["job"])):
             writer.writerow([
                 rec["job"], rec["client"], rec["location"],
+                "" if rec["altitude"] is None else rec["altitude"],
                 "" if rec["height"] is None else rec["height"],
                 "" if rec["width"] is None else rec["width"],
                 "" if rec["length"] is None else rec["length"],

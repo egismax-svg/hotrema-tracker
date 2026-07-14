@@ -348,8 +348,8 @@
     <div id="waList" class="p-4 space-y-2 max-h-80 overflow-y-auto"></div>
     <div class="p-3 bg-white flex gap-2">
       <button onclick="closeModal('waModal')" class="flex-1 py-2.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold text-sm">Done</button>
-      <button onclick="window.open('https://wa.me/?text=' + encodeURIComponent(lastWaText), '_blank')"
-        class="flex-1 py-2.5 rounded-xl bg-[#075e54] hover:bg-[#0a6e62] text-white font-semibold text-sm">💬 Open WhatsApp</button>
+      <button onclick="shareWa()"
+        class="flex-1 py-2.5 rounded-xl bg-[#075e54] hover:bg-[#0a6e62] text-white font-semibold text-sm">📤 Share to WhatsApp<span class="block text-[10px] font-normal opacity-80">pictures + info text</span></button>
     </div>
   </div>
 </div>
@@ -628,7 +628,23 @@ const state = {
   calOffset: 0, modTargetId: null, editTargetId: null, detailId: null,
 };
 let waIntent = true;   // set by whichever submit button was clicked
-let lastWaText = '';   // last scaffold info text, for the "Open WhatsApp" button
+let lastWaText = '';   // last scaffold info text, for the share button
+let lastWaFiles = [];  // photo File objects from the last submission (job, request, scaftag)
+
+// Share pictures + info text to WhatsApp via the phone's native share sheet.
+// Falls back to a text-only wa.me link on desktop browsers that can't share files.
+async function shareWa() {
+  if (lastWaFiles.length && navigator.canShare && navigator.canShare({ files: lastWaFiles })) {
+    try {
+      await navigator.share({ text: lastWaText, files: lastWaFiles });
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;   // user closed the share sheet
+    }
+  }
+  window.open('https://wa.me/?text=' + encodeURIComponent(lastWaText), '_blank');
+  if (lastWaFiles.length) toast('📷 This browser can\'t share pictures — attach them in WhatsApp by hand');
+}
 let currentUser = null; // full name of the logged-in user
 
 // ---------- Login ----------
@@ -954,13 +970,19 @@ function submitErection(e) {
   const infoText = [
     `Job - ${s.jobNumber}`,
     `C - ${s.client}`,
-    `Location - ${s.location}`,
+    `Location - ${s.location}${s.altitude != null ? ` (${euN(s.altitude)}m)` : ''}`,
     dimLines,
     ...(s.requestNumber ? [`R - ${s.requestNumber}`] : []),
     `Supervisor - ${s.supervisor}`,
     `J - ${s.type}`,
   ].join('\n');
   lastWaText = infoText;
+  // keep the actual photo files so the Share button can send pictures + text together
+  lastWaFiles = [
+    $('photoJob').files[0],
+    ...(!hot ? [$('photoReq').files[0]] : []),
+    $('photoScaftag').files[0],
+  ].filter(Boolean);
   const sendWa = waIntent;
   const msgs = [
     { img: s.photos.jobUrl,
@@ -1538,6 +1560,7 @@ const WA_FIELDS = {
   request:    /\bR\s?-\s*#?\s*([A-Za-z0-9/\-]+)/,
   type:       /\bJ\s?-\s*([^\n,;|]+)/,
   location:   /\blocation\s*[:\-]?\s*([^\n]+)/i,
+  altitude:   /\baltitude\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i,
   height:     /\bheights?\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i,
   width:      /\b(?:wide|width)\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i,
   length:     /\blength\s*[:\-]?\s*(\d+(?:[.,]\d+)?)/i,
@@ -1605,12 +1628,12 @@ function parseWaChat(text) {
       if (!key) return;
       rec = records[key] = {
         job: f.job || '', client: '', location: '', request: '', supervisor: '', type: '',
-        height: null, width: null, length: null,
+        height: null, width: null, length: null, altitude: null,
         firstSeen: g.ts, lastActivity: g.ts, sender: g.sender, status: 'Active', photoNames: [],
       };
     }
     ['client', 'location', 'supervisor', 'type', 'request'].forEach(k => { if (f[k]) rec[k] = f[k]; });
-    ['height', 'width', 'length'].forEach(k => { if (f[k] && !isNaN(waNum(f[k]))) rec[k] = waNum(f[k]); });
+    ['height', 'width', 'length', 'altitude'].forEach(k => { if (f[k] && !isNaN(waNum(f[k]))) rec[k] = waNum(f[k]); });
     rec.lastActivity = Math.max(rec.lastActivity, g.ts);
     rec.firstSeen = Math.min(rec.firstSeen, g.ts);
     if (g.dism) rec.status = 'Dismantled';
@@ -1632,11 +1655,16 @@ function parseWaChat(text) {
     if (rec) rec.photoNames.push(...g.att);
   });
 
-  // 5 · Hotrema rule + 30-day expiry rule
+  // 5 · Hotrema rule + 30-day expiry rule + altitude written inline as "Location - X (24m)"
   const newest = msgs.length ? Math.max(...msgs.map(g => g.ts)) : Date.now();
   Object.values(records).forEach(r => {
     if (isHotrema(r.client)) r.request = '';
     if (r.status === 'Active' && (newest - r.lastActivity) / DAY > WA_EXPIRY_DAYS) r.status = 'Dismantled';
+    const am = r.location.match(/^(.*?)\s*\((\d+(?:[.,]\d+)?)\s*m\)$/i);
+    if (am) {
+      r.location = am[1].trim();
+      if (r.altitude == null) r.altitude = waNum(am[2]);
+    }
   });
   return { records: Object.values(records), messageCount: msgs.length };
 }
@@ -1696,7 +1724,7 @@ async function runWaImport() {
           jobNumber: r.job || ('R-' + r.request), client: r.client || 'Unknown',
           location: r.location || '—',
           requestNumber: isHotrema(r.client) ? null : (r.request || null),
-          altitude: null, supervisor: r.supervisor || '—', type: r.type || '—',
+          altitude: r.altitude ?? null, supervisor: r.supervisor || '—', type: r.type || '—',
           inspector: r.sender, dims,
           volume: hr ? Math.round(dims.reduce((t, d) => t + d.l, 0) * 100) / 100 : vol(dims),
           unit: hr ? 'm' : 'm³',
@@ -1709,6 +1737,7 @@ async function runWaImport() {
         added++;
       } else {
         s.lastInspected = Math.max(s.lastInspected, r.lastActivity);
+        if (s.altitude == null && r.altitude != null) s.altitude = r.altitude;
         if (r.status !== 'Active' && s.status === 'Active') {
           s.status = 'Dismantled';
           s.history.push({ ts: r.lastActivity, type: 'Dismantled', inspector: r.sender, note: 'Status from WhatsApp import' });
